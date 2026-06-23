@@ -1,0 +1,28 @@
+# ParserTry — full parser set (install with: python install.py --full).
+# Heavy: downloads ML models and/or needs the external OCR tools
+# (tesseract, poppler, ghostscript, java) that install.py --full also sets up.
+
+# --- table extraction ---
+camelot-py[cv]>=0.11.0
+tabula-py>=2.9.0
+
+# --- advanced document conversion (layout + tables + OCR) ---
+docling>=2.0.0
+marker-pdf>=1.0.0
+mineru>=1.0.0
+unstructured[pdf]>=0.13.0
+opendataloader-pdf>=0.1.0
+
+# --- OCR engines ---
+paddleocr>=2.8.0
+easyocr>=1.7.0
+ocrmypdf>=16.0.0
+
+# --- vision-language model clients (cloud; keys set in the app) ---
+openai>=1.40.0
+anthropic>=0.34.0
+google-generativeai>=0.7.0
+ollama>=0.3.0
+
+# --- GPU-only VLM OCR (NVIDIA + vLLM; skipped automatically if unavailable) ---
+# olmocr>=0.1.0

@@ -1,0 +1,17 @@
+{
+  "global_settings": {
+    "default_language": "ko",
+    "use_gpu": false,
+    "render_dpi": 150
+  },
+  "parser_settings": {
+    "claude_vision": { "api_key": "", "model": "claude-opus-4-5" },
+    "openai_vision": { "api_key": "", "model": "gpt-5-mini" },
+    "gemini_vision": { "api_key": "", "model": "gemini-2.0-flash" }
+  },
+  "llm_credentials": {
+    "claude_vision": { "api_key": "" },
+    "openai_vision": { "api_key": "" },
+    "gemini_vision": { "api_key": "" }
+  }
+}

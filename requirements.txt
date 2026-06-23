@@ -1,0 +1,21 @@
+# ParserTry — core dependencies (always installed by install.py).
+# Lightweight, pure-Python parsers that work everywhere without system tools.
+
+# --- web app ---
+fastapi>=0.110.0
+uvicorn[standard]>=0.27.0
+python-multipart>=0.0.9
+aiofiles>=23.2.1
+pydantic>=2.0.0
+pydantic-settings>=2.0.0
+
+# --- core PDF engine + imaging ---
+pymupdf>=1.24.0
+Pillow>=10.0.0
+
+# --- lightweight PDF parsers (no external binaries) ---
+pdfplumber>=0.11.0
+pdfminer.six>=20221105
+pypdf>=4.0.0
+pymupdf4llm>=0.0.17
+markitdown[all]>=0.0.1

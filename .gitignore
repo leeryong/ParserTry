@@ -1,0 +1,11 @@
+# secrets & local config (NEVER commit real API keys)
+settings.json
+
+# runtime / generated
+.venv/
+__pycache__/
+cache/
+uploads/
+figures/
+*.log
+.DS_Store

@@ -1,0 +1,2112 @@
+<!DOCTYPE html>
+<html lang="ko" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ParserTry — PDF 파서 비교 도구</title>
+  <!-- 다크 모드 flash 방지: Alpine 로드 전에 적용 -->
+  <script>
+    (function() {
+      const saved = localStorage.getItem('parserTry_dark');
+      if (saved === 'false') document.documentElement.classList.remove('dark');
+      else document.documentElement.classList.add('dark');
+    })();
+  </script>
+  <!-- 저작권 안전 폰트(OFL 라이선스): Pretendard(한글) + JetBrains Mono(코드) -->
+  <link rel="stylesheet" as="style" crossorigin href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.min.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- 마크다운 렌더링 (GFM 표/코드/리스트 지원) — Alpine 이전에 로드 -->
+  <script src="https://cdn.jsdelivr.net/npm/marked@14.1.2/marked.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.1/dist/cdn.min.js"></script>
+  <link rel="stylesheet" href="/styles.css?v=19">
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: { extend: { colors: { primary: '#3B82F6' } } }
+    }
+  </script>
+</head>
+<body class="dark:bg-slate-900">
+
+<div id="app" x-data="docParserApp()" x-init="init()">
+
+  <!-- ── 네비게이션 바 ─────────────────────────────────── -->
+  <nav class="navbar">
+    <div class="flex items-center mr-4">
+      <img src="/assets/logo.png" alt="ParserTry" class="logo-img" title="ParserTry">
+    </div>
+    <div class="flex items-center gap-1 flex-1 overflow-x-auto">
+      <button class="nav-btn" :class="{active: view==='viewer'}" @click="view='viewer'"
+              x-text="t('viewer')"></button>
+      <button class="nav-btn hidden" :class="{active: view==='viewer'}" @click="goViewer()"
+              :disabled="!selectedDoc" x-text="t('viewer')"></button>
+      <button class="nav-btn" :class="{active: view==='analysis'}" @click="goAnalysis()"
+              x-text="t('analysis')"></button>
+      <button class="nav-btn" :class="{active: view==='parsers'}" @click="view='parsers'"
+              x-text="t('parsersInfo')"></button>
+      <button class="nav-btn" :class="{active: view==='settings'}" @click="view='settings'"
+              x-text="t('settings')"></button>
+      <button class="nav-btn" :class="{active: view==='help'}" @click="view='help'"
+              x-text="t('help')"></button>
+    </div>
+    <div class="ml-auto flex items-center gap-2 text-sm">
+      <!-- 언어 선택기 -->
+      <div class="flex items-center gap-px border border-slate-600 dark:border-slate-600 rounded-lg overflow-hidden text-xs">
+        <template x-for="l in ['ko','en','ja','zh']" :key="l">
+          <button @click="changeLang(l)"
+                  class="px-2 py-1 transition-colors"
+                  :class="lang===l ? 'bg-blue-600 text-white font-semibold' : 'text-slate-400 hover:bg-slate-700 dark:hover:bg-slate-700'"
+                  x-text="l==='ko'?'한':l==='en'?'EN':l==='ja'?'日':'中'"></button>
+        </template>
+      </div>
+      <!-- 다크/라이트 토글 -->
+      <button @click="toggleDark()"
+              class="w-8 h-8 flex items-center justify-center rounded-lg transition-colors text-slate-400 hover:bg-slate-700 dark:hover:bg-slate-700"
+              :title="darkMode ? '라이트 모드로 전환' : '다크 모드로 전환'">
+        <span x-text="darkMode ? '☀️' : '🌙'" class="text-base leading-none"></span>
+      </button>
+    </div>
+  </nav>
+
+  <!-- ── 메인 레이아웃 ─────────────────────────────────── -->
+  <div class="main-layout">
+
+    <!-- ── 사이드바: 문서 목록 ──────────────────────────── -->
+    <aside class="sidebar"
+           @dragover.prevent="sidebarDragOver = true"
+           @dragleave.self="sidebarDragOver = false"
+           @drop.prevent="sidebarDragOver = false; handleDrop($event)">
+
+      <!-- 드래그 업로드 존 + 버튼 통합 -->
+      <div class="p-2 border-b border-slate-100 dark:border-slate-700">
+        <div class="relative rounded-lg border-2 transition-colors cursor-pointer"
+             :class="sidebarDragOver
+               ? 'border-blue-500 bg-blue-50 dark:bg-blue-950/40'
+               : 'border-dashed border-slate-300 dark:border-slate-600 hover:border-blue-400 dark:hover:border-blue-500 hover:bg-slate-50 dark:hover:bg-slate-800/60'"
+             @click="triggerUpload()">
+          <div class="flex items-center gap-2 px-3 py-2.5">
+            <span class="text-lg" x-text="sidebarDragOver ? '📂' : '➕'"></span>
+            <div class="flex-1 min-w-0">
+              <div class="text-xs font-medium text-slate-700 dark:text-slate-200" x-text="sidebarDragOver ? 'PDF를 여기에 놓으세요' : t('uploadBtn')"></div>
+              <div class="text-xs text-slate-400 dark:text-slate-500" x-show="!sidebarDragOver">드래그하거나 클릭</div>
+            </div>
+          </div>
+        </div>
+        <input type="file" accept=".pdf" multiple class="hidden" id="fileInput" @change="handleFileInput($event)">
+      </div>
+
+      <!-- 문서목록 헤더 -->
+      <div class="flex items-center justify-between px-3 py-2 text-xs text-slate-400 dark:text-slate-400 font-medium border-b border-slate-100 dark:border-slate-700">
+        <span><span x-text="t('docList')"></span> (<span x-text="documents.length"></span>)</span>
+        <div class="flex items-center gap-2" x-show="documents.length > 0">
+          <!-- 선택 모드 진입/취소 -->
+          <button @click="toggleSelectMode()"
+                  class="transition-colors"
+                  :class="selectMode ? 'text-blue-500' : 'text-slate-400 hover:text-slate-600 dark:hover:text-slate-300'"
+                  x-text="selectMode ? '취소' : '선택'"></button>
+          <!-- 평상시 전체삭제 -->
+          <button x-show="!selectMode" @click="confirmDeleteAll()"
+                  class="text-red-400 hover:text-red-600 transition-colors"
+                  x-text="t('deleteAll')"></button>
+        </div>
+      </div>
+
+      <!-- 선택 모드 액션 바 -->
+      <div x-show="selectMode" class="flex items-center gap-2 px-3 py-1.5 bg-blue-50 dark:bg-blue-950/40 border-b border-blue-100 dark:border-blue-900 text-xs">
+        <button @click="toggleCheckAll()"
+                class="text-blue-600 dark:text-blue-400 hover:underline"
+                x-text="checkedDocs.length === documents.length ? '전체 해제' : '전체 선택'"></button>
+        <span class="text-slate-400 dark:text-slate-500 ml-1"
+              x-show="checkedDocs.length > 0"
+              x-text="`${checkedDocs.length}개 선택됨`"></span>
+        <button x-show="checkedDocs.length > 0"
+                @click="deleteChecked()"
+                class="ml-auto flex items-center gap-1 bg-red-600 hover:bg-red-700 text-white px-2.5 py-1 rounded-lg transition-colors font-medium">
+          🗑 삭제
+        </button>
+      </div>
+
+      <div class="flex-1 overflow-y-auto p-2">
+        <template x-if="documents.length === 0">
+          <div class="empty-state">
+            <div class="icon">📂</div>
+            <p x-text="t('dropZoneSub')"></p>
+          </div>
+        </template>
+
+        <template x-for="doc in documents" :key="doc.id">
+          <div class="doc-card"
+               :class="{
+                 selected: !selectMode && selectedDoc && selectedDoc.id === doc.id,
+                 'ring-2 ring-blue-500 ring-inset': selectMode && checkedDocs.includes(doc.id)
+               }"
+               @click="selectMode ? toggleCheck(doc.id) : selectDocument(doc)">
+            <!-- 선택 모드: 체크박스 -->
+            <div x-show="selectMode" class="flex-shrink-0 mr-1">
+              <div class="w-4 h-4 rounded border-2 flex items-center justify-center transition-colors"
+                   :class="checkedDocs.includes(doc.id)
+                     ? 'bg-blue-600 border-blue-600 text-white'
+                     : 'border-slate-400 dark:border-slate-500'">
+                <span x-show="checkedDocs.includes(doc.id)" class="text-white text-xs leading-none">✓</span>
+              </div>
+            </div>
+            <img :src="doc.thumbnail_b64 || '/placeholder.png'"
+                 class="thumb" :alt="doc.filename"
+                 onerror="this.src='data:image/svg+xml,<svg xmlns=&quot;http://www.w3.org/2000/svg&quot; width=&quot;36&quot; height=&quot;48&quot; viewBox=&quot;0 0 36 48&quot;><rect width=&quot;36&quot; height=&quot;48&quot; fill=&quot;%23F1F5F9&quot;/><text x=&quot;50%&quot; y=&quot;55%&quot; text-anchor=&quot;middle&quot; font-size=&quot;14&quot;>📄</text></svg>'">
+            <div class="flex flex-col flex-1 overflow-hidden">
+              <span class="name" :title="doc.filename" x-text="doc.filename"></span>
+              <span class="meta" x-text="`${doc.page_count}p · ${formatSize(doc.size)}`"></span>
+            </div>
+            <!-- 일반 모드: 개별 삭제 버튼 -->
+            <button x-show="!selectMode"
+                    @click.stop="deleteDocument(doc.id)"
+                    class="text-slate-300 hover:text-red-400 text-base ml-1 transition-all flex-shrink-0"
+                    style="opacity:0" @mouseenter="$el.style.opacity=1" @mouseleave="$el.style.opacity=0">✕</button>
+          </div>
+        </template>
+      </div>
+    </aside>
+
+    <!-- ── 메인 콘텐츠 ────────────────────────────────────── -->
+    <main class="content overflow-auto"
+          @dragover.prevent="dragOver = true"
+          @dragleave="dragOver = false"
+          @drop.prevent="handleDrop($event)">
+
+      <!-- 드래그 오버레이 -->
+      <div x-show="dragOver"
+           class="fixed inset-0 bg-blue-600 bg-opacity-20 z-50 flex items-center justify-center pointer-events-none"
+           x-transition>
+        <div class="bg-white dark:bg-slate-800 rounded-2xl p-8 shadow-2xl text-center">
+          <div class="text-5xl mb-3">📂</div>
+          <p class="text-lg font-semibold text-slate-700 dark:text-slate-200">PDF 파일을 여기에 놓으세요</p>
+        </div>
+      </div>
+
+      <!-- ═══ 홈 뷰 ═══════════════════════════════════════ -->
+      <div x-show="view==='home'" class="p-6 max-w-3xl mx-auto">
+        <h1 class="text-2xl font-bold text-slate-800 dark:text-slate-100 mb-1" x-text="t('appName')"></h1>
+        <p class="text-slate-500 dark:text-slate-400 text-sm mb-6" x-text="t('appDesc')"></p>
+
+        <!-- 드래그 앤 드롭 -->
+        <div class="drop-zone" :class="{'drag-over': dragOver}"
+             @click="triggerUpload()"
+             @dragover.prevent="dragOver = true"
+             @dragleave="dragOver = false"
+             @drop.prevent="handleDrop($event)">
+          <div class="icon">📄</div>
+          <div class="text-center">
+            <p class="font-semibold text-slate-700 dark:text-slate-200" x-text="t('dropZoneTitle')"></p>
+            <p class="text-sm text-slate-400 dark:text-slate-400 mt-1" x-text="t('dropZoneSub')"></p>
+          </div>
+        </div>
+
+        <!-- 빠른 시작 안내 -->
+        <div class="mt-8 grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div class="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-4">
+            <div class="text-2xl mb-2">1️⃣</div>
+            <h3 class="font-semibold text-slate-700 dark:text-slate-200 text-sm mb-1" x-text="t('step1Title')"></h3>
+            <p class="text-xs text-slate-500 dark:text-slate-400" x-text="t('step1Desc')"></p>
+          </div>
+          <div class="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-4">
+            <div class="text-2xl mb-2">2️⃣</div>
+            <h3 class="font-semibold text-slate-700 dark:text-slate-200 text-sm mb-1" x-text="t('step2Title')"></h3>
+            <p class="text-xs text-slate-500 dark:text-slate-400" x-text="t('step2Desc')"></p>
+          </div>
+          <div class="bg-white dark:bg-slate-800 rounded-xl border border-slate-200 dark:border-slate-700 p-4">
+            <div class="text-2xl mb-2">3️⃣</div>
+            <h3 class="font-semibold text-slate-700 dark:text-slate-200 text-sm mb-1" x-text="t('step3Title')"></h3>
+            <p class="text-xs text-slate-500 dark:text-slate-400" x-text="t('step3Desc')"></p>
+          </div>
+        </div>
+      </div>
+
+      <!-- ═══ 문서 뷰어 ════════════════════════════════════ -->
+      <div x-show="view==='viewer'" class="flex flex-col h-full">
+
+        <!-- ── 상단 툴바: 파서 드롭다운 + 분석 버튼 + 진행률 ── -->
+        <div class="bg-white dark:bg-slate-800 border-b border-slate-200 dark:border-slate-700 px-4 py-2 flex items-center gap-3 flex-nowrap overflow-x-auto">
+          <!-- 파서 선택 드롭다운 -->
+          <div class="flex items-center gap-2 flex-shrink-0">
+            <label class="text-xs text-slate-500 dark:text-slate-400 whitespace-nowrap" x-text="t('parserSelect')"></label>
+            <select x-model="activeResultParser" @change="onParserChange()"
+                    class="border border-slate-300 dark:border-slate-600 rounded-lg px-3 py-1.5 text-sm bg-white dark:bg-slate-800 dark:text-slate-100 focus:ring-2 focus:ring-blue-500 focus:border-blue-500 min-w-40">
+              <optgroup :label="t('installedGroup')">
+                <template x-for="p in parsersInfo.filter(p => p.is_available)" :key="p.parser_id">
+                  <option :value="p.parser_id" x-text="p.parser_name"></option>
+                </template>
+              </optgroup>
+              <optgroup :label="t('notInstalledGroup')">
+                <template x-for="p in parsersInfo.filter(p => !p.is_available)" :key="p.parser_id">
+                  <option :value="p.parser_id" x-text="p.parser_name + ' (' + t('notInstalledLabel') + ')'"></option>
+                </template>
+              </optgroup>
+            </select>
+          </div>
+
+          <!-- LLM 파서: 인증 상태 + 모델 선택 -->
+          <template x-if="isLlmParser(activeResultParser)">
+            <div class="flex items-center gap-1.5 flex-shrink-0">
+              <!-- 인증 상태 배지 -->
+              <span class="text-xs px-2 py-1 rounded-lg whitespace-nowrap flex items-center gap-1"
+                    :class="llmAuthOk(activeResultParser)
+                      ? 'bg-green-100 dark:bg-green-900/50 text-green-700 dark:text-green-300'
+                      : 'bg-amber-100 dark:bg-amber-900/50 text-amber-700 dark:text-amber-300'">
+                <span x-text="llmAuthOk(activeResultParser) ? '🔓 인증됨' : '🔒 키 필요'"></span>
+              </span>
+              <!-- 모델 선택 -->
+              <select x-show="llmModels(activeResultParser).length"
+                      :value="getOptionValue2(activeResultParser, 'model')"
+                      @change="setLlmModel(activeResultParser, $event.target.value)"
+                      class="border border-slate-300 dark:border-slate-600 rounded-lg px-2 py-1.5 text-sm bg-white dark:bg-slate-800 dark:text-slate-100 max-w-44">
+                <template x-for="m in llmModels(activeResultParser)" :key="m.id">
+                  <option :value="m.id" x-text="m.label"></option>
+                </template>
+              </select>
+              <!-- 인증 안 됐으면 설정 바로가기 -->
+              <button x-show="!llmAuthOk(activeResultParser)" @click="view='settings'; settingsTab='llm'"
+                      class="text-xs text-blue-600 dark:text-blue-400 hover:underline whitespace-nowrap">키 입력 →</button>
+            </div>
+          </template>
+
+          <!-- 페이지 범위 선택 -->
+          <div class="flex items-center gap-1.5 flex-shrink-0">
+            <label class="text-xs text-slate-500 dark:text-slate-400 whitespace-nowrap" x-text="t('pageRange')"></label>
+            <select x-model="pageMode"
+                    class="border border-slate-300 dark:border-slate-600 rounded-lg px-2 py-1.5 text-sm bg-white dark:bg-slate-800 dark:text-slate-100 focus:ring-2 focus:ring-blue-500">
+              <option value="current" x-text="t('pageFirst')"></option>
+              <option value="all" x-text="t('pageAll')"></option>
+              <option value="range" x-text="t('pageRangeOpt')"></option>
+            </select>
+            <template x-if="pageMode === 'range'">
+              <span class="flex items-center gap-1 text-xs">
+                <input type="number" min="1" :max="totalPages" x-model.number="pageStart"
+                       class="w-14 border border-slate-300 dark:border-slate-600 rounded px-1.5 py-1 text-center bg-white dark:bg-slate-800 dark:text-slate-100">
+                <span class="text-slate-400">~</span>
+                <input type="number" min="1" :max="totalPages" x-model.number="pageEnd"
+                       class="w-14 border border-slate-300 dark:border-slate-600 rounded px-1.5 py-1 text-center bg-white dark:bg-slate-800 dark:text-slate-100">
+                <span class="text-slate-400 dark:text-slate-500" x-text="`/ ${totalPages}`"></span>
+              </span>
+            </template>
+          </div>
+
+          <!-- 옵션 버튼 -->
+          <button @click="openOptions()"
+                  :disabled="!activeResultParser"
+                  class="flex-shrink-0 flex items-center gap-1.5 border border-slate-300 dark:border-slate-600 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 text-sm py-1.5 px-3 rounded-lg transition-colors whitespace-nowrap disabled:opacity-40">
+            ⚙ 옵션
+          </button>
+
+          <!-- 분석 시작 버튼 -->
+          <button x-show="!isParsingActive" @click="startParseSingle()"
+                  :disabled="!selectedDoc || !activeResultParser"
+                  class="btn-analyze flex-shrink-0 flex items-center gap-2 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-300 dark:disabled:bg-slate-700 disabled:shadow-none text-white text-sm font-semibold py-2 px-5 rounded-lg transition-all whitespace-nowrap">
+            <span x-text="t('analyzeBtn')"></span>
+          </button>
+
+          <!-- 중지 버튼 (분석 중) -->
+          <button x-show="isParsingActive" @click="cancelParse()"
+                  class="flex-shrink-0 flex items-center gap-2 bg-red-600 hover:bg-red-700 text-white text-sm font-medium py-1.5 px-4 rounded-lg transition-colors whitespace-nowrap">
+            <span class="spinner" style="width:13px;height:13px;border-width:2px;border-top-color:#fff"></span>
+            <span x-text="t('stopBtn')"></span>
+          </button>
+
+          <!-- 결과 초기화 버튼 -->
+          <button x-show="!isParsingActive && selectedDoc && Object.keys(parseResults).some(k => parseResults[k])"
+                  @click="resetDocResults()"
+                  class="flex-shrink-0 flex items-center gap-1 border border-slate-300 dark:border-slate-600 text-slate-500 dark:text-slate-400 hover:border-red-400 hover:text-red-500 dark:hover:text-red-400 text-xs py-1.5 px-2.5 rounded-lg transition-colors whitespace-nowrap"
+                  title="현재 문서의 모든 파싱 결과를 초기화합니다">
+            🗑 초기화
+          </button>
+
+          <!-- (진행률은 하단 상태바로 통합됨) -->
+        </div>
+
+        <!-- ── 메인 뷰: 좌(PDF 원본) + 우(파싱 결과) ── -->
+        <div class="flex flex-1 overflow-hidden viewer-panels" x-ref="viewerPanels">
+
+          <!-- ─── 좌: PDF 원본 뷰 ─────────────────────────── -->
+          <div class="flex flex-col min-w-64 overflow-hidden" :style="`width:${panelSplit}%`">
+
+            <!-- 패널 헤더 -->
+            <div class="flex items-center justify-between px-3 py-1.5 bg-slate-50 dark:bg-slate-900 border-b border-slate-200 dark:border-slate-700">
+              <span class="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide" x-text="t('pdfOriginal')"></span>
+              <!-- 페이지 네비 + 줌 -->
+              <div class="flex items-center gap-1 text-sm">
+                <button @click="prevPage()" :disabled="currentPage<=0"
+                        class="px-1.5 py-0.5 rounded hover:bg-slate-200 dark:hover:bg-slate-700 disabled:opacity-30">◀</button>
+                <span class="text-xs text-slate-600 dark:text-slate-300 mx-1">
+                  <span x-text="currentPage+1"></span>/<span x-text="totalPages"></span>
+                </span>
+                <button @click="nextPage()" :disabled="currentPage>=totalPages-1"
+                        class="px-1.5 py-0.5 rounded hover:bg-slate-200 dark:hover:bg-slate-700 disabled:opacity-30">▶</button>
+                <span class="w-px h-3 bg-slate-300 dark:bg-slate-600 mx-1"></span>
+                <button @click="zoomOut()" class="px-1.5 py-0.5 rounded hover:bg-slate-200 dark:hover:bg-slate-700 text-xs">−</button>
+                <span class="text-xs text-slate-500 dark:text-slate-400 w-10 text-center" x-text="_displayPct()+'%'"></span>
+                <button @click="zoomIn()"  class="px-1.5 py-0.5 rounded hover:bg-slate-200 dark:hover:bg-slate-700 text-xs">+</button>
+                <button @click="zoomFitHeight()" class="px-1.5 py-0.5 rounded hover:bg-slate-200 dark:hover:bg-slate-700 text-xs ml-1" :title="t('fitHeightTip')" x-text="t('fitBtn')"></button>
+                <button @click="zoomFitWidth()" class="px-1.5 py-0.5 rounded hover:bg-slate-200 dark:hover:bg-slate-700 text-xs" :title="t('fitWidthTip')" x-text="t('fitWidthBtn')"></button>
+              </div>
+            </div>
+
+            <!-- PDF 연속 스크롤 뷰 + 페이지별 오버레이 -->
+            <div class="flex-1 overflow-auto p-3 bg-slate-100 dark:bg-slate-950"
+                 id="pdfScroller" @scroll.throttle.100ms="onScrollPages()">
+              <template x-if="selectedDoc">
+                <div class="flex flex-col items-center gap-3">
+                  <template x-for="pn in totalPages" :key="`${selectedDoc.id}-${pn-1}`">
+                    <div class="pdf-page-wrap"
+                         :data-page="pn-1"
+                         :style="pageWrapStyle(pn-1)">
+                      <img :src="pageImageUrl(pn-1)" alt="PDF 페이지" loading="lazy"
+                           class="pdf-page-img"
+                           @load="onPageImgLoad(pn-1, $event)">
+                      <!-- 페이지 번호 배지 -->
+                      <div class="pdf-page-badge" x-text="pn"></div>
+                      <!-- 해당 페이지 오버레이 -->
+                      <div class="overlay-container">
+                        <template x-for="elem in getPageElements(activeResultParser, pn-1)" :key="elem.id">
+                          <div class="overlay-box"
+                               :class="{ selected: selectedElementId === elem.id }"
+                               :style="getOverlayStylePct(elem, pn-1)"
+                               @click="selectElement(elem, 'overlay')">
+                            <div class="tooltip" x-text="getTooltipText(elem)"></div>
+                          </div>
+                        </template>
+                      </div>
+                    </div>
+                  </template>
+                </div>
+              </template>
+              <template x-if="!selectedDoc">
+                <div class="w-full h-full flex flex-col items-center justify-center gap-3 p-4">
+                  <!-- 대표 개념도 — 클릭 → 팝업 확대 -->
+                  <img :src="lang === 'en' ? '/assets/concept_en.png' : '/assets/concept_ko.png'"
+                       alt="ParserTry 개념도"
+                       class="w-full max-w-2xl rounded-xl shadow-lg cursor-zoom-in opacity-90 hover:opacity-100 transition-opacity"
+                       @click="conceptPopup = true"
+                       title="클릭하면 크게 볼 수 있습니다">
+                </div>
+              </template>
+            </div>
+
+            <!-- 요소 타입 색상 범례 (오버레이 데이터가 있을 때만, 기본 접힘) -->
+            <div x-show="hasOverlayData()"
+                 class="px-3 py-1.5 bg-white dark:bg-slate-800 border-t border-slate-100 dark:border-slate-700">
+              <button @click="legendOpen = !legendOpen"
+                      class="flex items-center gap-1 text-xs text-slate-400 dark:text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition-colors">
+                <span x-text="legendOpen ? '▾' : '▸'"></span>
+                <span x-text="t('overlayLegend')"></span>
+              </button>
+              <div x-show="legendOpen" x-transition class="flex flex-wrap gap-x-3 gap-y-1 mt-1.5">
+                <template x-for="item in usedElemTypes()" :key="item.type">
+                  <span class="flex items-center gap-1 text-xs text-slate-600 dark:text-slate-300">
+                    <span class="inline-block w-3 h-3 rounded-sm border"
+                          :style="`background:${item.color}30; border-color:${item.color}`"></span>
+                    <span x-text="item.label"></span>
+                  </span>
+                </template>
+              </div>
+            </div>
+          </div>
+
+          <!-- 드래그 가능한 분리자 -->
+          <div class="w-1.5 flex-shrink-0 bg-slate-200 dark:bg-slate-700 hover:bg-blue-400 dark:hover:bg-blue-500 cursor-col-resize transition-colors select-none"
+               @mousedown.prevent="startResize($event)"
+               title="드래그하여 패널 크기 조절"></div>
+
+          <!-- ─── 우: 파싱 결과 뷰 ───────────────────────── -->
+          <div class="flex flex-col flex-1 min-w-64 overflow-hidden">
+
+            <!-- 패널 헤더: 파서 정보 표시 -->
+            <div class="px-3 py-1.5 bg-slate-50 dark:bg-slate-900 border-b border-slate-200 dark:border-slate-700 flex items-center gap-2">
+              <span class="text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wide" x-text="t('parseResult')"></span>
+              <template x-if="activeResultParser">
+                <span class="flex items-center gap-1.5 text-xs">
+                  <span class="w-2 h-2 rounded-full"
+                        :style="`background:${getParserColor(activeResultParser)}`"></span>
+                  <span class="font-medium text-slate-700 dark:text-slate-200" x-text="getParserName(activeResultParser)"></span>
+                  <span x-show="activeResult()?.processing_time"
+                        class="text-slate-400 dark:text-slate-400"
+                        x-text="activeResult()?.processing_time ? activeResult().processing_time.toFixed(2)+'s' : ''"></span>
+                  <template x-if="activeResult()?.status === 'success'">
+                    <span class="text-green-600" x-text="t('successTag')"></span>
+                  </template>
+                  <template x-if="activeResult()?.status === 'error'">
+                    <button @click="openError(activeResult())"
+                            class="text-red-500 hover:text-red-600 hover:underline flex items-center gap-1"
+                            title="오류 상세 보기">
+                      <span x-text="t('errorTag')"></span>
+                      <span class="text-xs">🔍 상세</span>
+                    </button>
+                  </template>
+                  <template x-if="activeResult()?.status === 'not_installed'">
+                    <span class="text-amber-500" x-text="t('notInstalledTag')"></span>
+                  </template>
+                  <template x-if="activeResult()?.status === 'cancelled'">
+                    <span class="text-orange-500" x-text="t('cancelledTag')"></span>
+                  </template>
+                </span>
+              </template>
+              <div class="ml-auto">
+                <button x-show="activeResult()?.text" @click="copyResult()"
+                        class="text-xs text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 px-2 py-0.5 rounded hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
+                        x-text="t('copyBtn')"></button>
+              </div>
+            </div>
+
+            <!-- 결과 탭 -->
+            <div class="bg-white dark:bg-slate-800 border-b border-slate-100 dark:border-slate-700 px-3 flex gap-1">
+              <button class="result-tab-btn" :class="{active: resultTab==='text'}"     @click="resultTab='text'"     x-text="t('tabText')"></button>
+              <button class="result-tab-btn" :class="{active: resultTab==='markdown'}" @click="resultTab='markdown'" x-text="t('tabMarkdown')"></button>
+              <button class="result-tab-btn" :class="{active: resultTab==='elements'}" @click="resultTab='elements'" x-text="t('tabElements')"></button>
+              <button class="result-tab-btn flex items-center gap-1" :class="{active: resultTab==='layout'}" @click="resultTab='layout'">
+                <span x-text="t('tabLayout')"></span>
+                <span x-show="hasLayoutData()"
+                      class="text-xs bg-purple-100 dark:bg-purple-900 text-purple-700 dark:text-purple-300 rounded-full px-1.5"
+                      x-text="(activeResult()?.elements||[]).filter(e=>e.bbox).length"></span>
+              </button>
+              <button class="result-tab-btn flex items-center gap-1" :class="{active: resultTab==='media'}" @click="resultTab='media'">
+                <span x-text="t('tabMedia')"></span>
+                <span x-show="(activeResult()?.media?.length||0) > 0"
+                      class="text-xs bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300 rounded-full px-1.5"
+                      x-text="activeResult()?.media?.length"></span>
+              </button>
+              <button class="result-tab-btn" :class="{active: resultTab==='json'}"     @click="resultTab='json'"     x-text="t('tabJson')"></button>
+            </div>
+
+            <!-- ── 파싱 진행 상황 프로그레스바 ── -->
+            <div x-show="isParsingActive"
+                 class="px-4 pt-3 pb-2 bg-white dark:bg-slate-900 border-b border-slate-100 dark:border-slate-700">
+              <!-- 파서명 + 퍼센트 -->
+              <div class="flex items-center justify-between mb-1 text-xs">
+                <div class="flex items-center gap-2 min-w-0">
+                  <span class="spinner flex-shrink-0" style="width:11px;height:11px;border-width:2px"
+                        :style="`border-top-color:${getParserColor(activeResultParser)}`"></span>
+                  <span class="font-semibold flex-shrink-0"
+                        :style="`color:${getParserColor(activeResultParser)}`"
+                        x-text="getParserName(activeResultParser)"></span>
+                  <span class="text-slate-400 dark:text-slate-500 truncate" x-text="parseStep"></span>
+                </div>
+                <span class="font-mono font-bold flex-shrink-0 ml-2"
+                      :style="`color:${getParserColor(activeResultParser)}`"
+                      x-text="Math.round(parseProgress * 100) + '%'"></span>
+              </div>
+              <!-- 프로그레스바 트랙 -->
+              <div class="w-full h-2 bg-slate-100 dark:bg-slate-700 rounded-full overflow-hidden mb-1.5">
+                <div class="h-full rounded-full transition-all duration-500"
+                     :style="`width:${Math.max(2, parseProgress * 100)}%; background:${getParserColor(activeResultParser)}`"></div>
+              </div>
+              <!-- ETA -->
+              <div class="text-xs text-slate-400 dark:text-slate-500 text-right h-3.5"
+                   x-text="parseETA"></div>
+            </div>
+
+            <!-- 결과 내용 -->
+            <div class="flex-1 overflow-auto p-4 dark:bg-slate-900">
+
+              <!-- 텍스트 탭 -->
+              <template x-if="resultTab === 'text'">
+                <div id="resultText">
+                  <template x-if="!activeResultParser">
+                    <div class="empty-state"><div class="icon">📊</div><p x-text="t('startAnalysis')"></p></div>
+                  </template>
+                  <template x-if="activeResult()?.status === 'not_installed'">
+                    <div class="bg-amber-50 dark:bg-amber-950 border border-amber-200 rounded-lg p-4">
+                      <p class="font-semibold text-amber-800 mb-2" x-text="t('notInstalled')"></p>
+                      <p class="text-sm text-amber-700 mb-3" x-text="activeResult()?.error"></p>
+                      <div class="bg-slate-800 text-green-400 rounded p-2 font-mono text-sm mb-3"
+                           x-text="activeResult()?.install_command"></div>
+                      <a :href="activeResult()?.github_url" target="_blank"
+                         class="text-sm text-blue-600 hover:underline" x-text="t('githubLink')"></a>
+                    </div>
+                  </template>
+                  <template x-if="activeResult()?.status === 'error'">
+                    <div class="bg-red-50 dark:bg-red-950/60 border border-red-200 dark:border-red-800 rounded-lg p-4">
+                      <p class="font-semibold text-red-700 dark:text-red-300 mb-2" x-text="t('parseError')"></p>
+                      <!-- 간단 요약 -->
+                      <p class="text-sm text-red-600 dark:text-red-300 mb-3" x-text="errorSummary(activeResult()?.error)"></p>
+                      <div class="flex gap-2">
+                        <button @click="openError(activeResult())"
+                                class="text-xs bg-red-600 hover:bg-red-700 text-white px-3 py-1.5 rounded-lg transition-colors">🔍 상세 원인 보기</button>
+                        <a :href="activeResult()?.github_url" target="_blank"
+                           class="text-xs bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200 px-3 py-1.5 rounded-lg transition-colors">🔗 GitHub 도움말</a>
+                      </div>
+                    </div>
+                  </template>
+                  <template x-if="activeResult()?.status === 'success'">
+                    <pre class="text-xs text-slate-700 dark:text-slate-200 whitespace-pre-wrap leading-relaxed font-mono bg-slate-50 dark:bg-slate-900 p-3 rounded-lg"
+                         x-text="activeResult()?.text || '(추출된 텍스트 없음)'"></pre>
+                  </template>
+                  <template x-if="activeResultParser && !activeResult()">
+                    <div class="empty-state cursor-pointer hover:opacity-80 transition-opacity"
+                         @click="startParseSingle()"
+                         :title="t('analyzeBtn')">
+                      <div class="icon text-blue-500">▶</div>
+                      <p x-text="t('startAnalysis')"></p>
+                    </div>
+                  </template>
+                </div>
+              </template>
+
+              <!-- 마크다운 탭 -->
+              <template x-if="resultTab === 'markdown'">
+                <div>
+                  <template x-if="activeResult()?.status === 'success'">
+                    <div>
+                      <label class="flex items-center gap-2 text-sm text-slate-600 dark:text-slate-300 mb-3 cursor-pointer">
+                        <input type="checkbox" x-model="renderMarkdown" class="accent-blue-600">
+                        <span x-text="t('renderMd')"></span>
+                      </label>
+                      <template x-if="renderMarkdown">
+                        <div class="markdown-output" x-html="renderMd(activeResult()?.markdown)"></div>
+                      </template>
+                      <template x-if="!renderMarkdown">
+                        <pre class="code-preview" x-text="activeResult()?.markdown || '(마크다운 없음)'"></pre>
+                      </template>
+                    </div>
+                  </template>
+                  <template x-if="!activeResult() || activeResult()?.status !== 'success'">
+                    <div class="empty-state"><div class="icon">📝</div><p x-text="t('noResult')"></p></div>
+                  </template>
+                </div>
+              </template>
+
+              <!-- 요소 목록 탭 -->
+              <template x-if="resultTab === 'elements'">
+                <div>
+                  <template x-if="activeResult()?.status === 'success'">
+                    <div class="space-y-2">
+                      <div class="flex items-center gap-2 flex-wrap mb-3">
+                        <span class="text-sm text-slate-500 dark:text-slate-400"><span x-text="t('totalElements')"></span> <strong x-text="activeResult()?.elements?.length || 0"></strong> <span x-text="t('elements')"></span></span>
+                        <select x-model="elemPageFilter" class="border border-slate-200 dark:border-slate-700 rounded px-2 py-0.5 text-xs bg-white dark:bg-slate-800 dark:text-slate-100">
+                          <option value="-1" x-text="t('allPages')"></option>
+                          <template x-for="p in (activeResult()?.pages || [])" :key="p.page_num">
+                            <option :value="p.page_num" x-text="`${p.page_num+1}페이지`"></option>
+                          </template>
+                        </select>
+                        <select x-model="elemTypeFilter" class="border border-slate-200 dark:border-slate-700 rounded px-2 py-0.5 text-xs bg-white dark:bg-slate-800 dark:text-slate-100">
+                          <option value="" x-text="t('allTypes')"></option>
+                          <option value="text" x-text="getElemTypeLabel('text')"></option>
+                          <option value="heading" x-text="getElemTypeLabel('heading')"></option>
+                          <option value="table" x-text="getElemTypeLabel('table')"></option>
+                          <option value="image" x-text="getElemTypeLabel('image')"></option>
+                          <option value="formula" x-text="getElemTypeLabel('formula')"></option>
+                          <option value="code" x-text="getElemTypeLabel('code')"></option>
+                          <option value="list_item" x-text="getElemTypeLabel('list_item')"></option>
+                        </select>
+                      </div>
+
+                      <template x-for="elem in filteredElements()" :key="elem.id">
+                        <div class="elem-card rounded-lg p-3 border border-l-4 border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/40"
+                             :class="{ selected: selectedElementId === elem.id }"
+                             :style="`border-left-color:${getElemColor(elem.type)}`"
+                             :id="`elem-card-${elem.id}`"
+                             @click="selectElement(elem, 'list')">
+                          <div class="flex gap-2">
+                            <!-- 그림/표/차트/수식 썸네일 -->
+                            <template x-if="elemMedia(elem)">
+                              <img :src="elemMedia(elem).url" loading="lazy"
+                                   class="w-16 h-16 object-contain rounded border border-slate-200 dark:border-slate-600 bg-white flex-shrink-0 cursor-zoom-in"
+                                   @click.stop="openMedia(elemMedia(elem))">
+                            </template>
+                            <div class="flex-1 min-w-0">
+                              <div class="flex items-center gap-2 mb-1 flex-wrap">
+                                <span class="elem-badge" :class="`elem-${elem.type}`"
+                                      x-text="getElemTypeLabel(elem.type)"></span>
+                                <span x-show="elem.bbox" class="text-xs text-blue-500 dark:text-blue-400"
+                                      x-text="elem.bbox ? `📍p.${elem.bbox.page+1}` : ''"></span>
+                                <span x-show="elem.bbox" class="text-xs text-slate-400 dark:text-slate-500"
+                                      x-text="elem.bbox ? `(${Math.round(elem.bbox.x0)}, ${Math.round(elem.bbox.y0)})` : ''"></span>
+                              </div>
+                              <p class="text-xs text-slate-700 dark:text-slate-200 leading-relaxed line-clamp-4"
+                                 x-text="elem.content || '(내용 없음)'"></p>
+                            </div>
+                          </div>
+                        </div>
+                      </template>
+
+                      <template x-if="filteredElements().length === 0">
+                        <div class="empty-state"><div class="icon">🔍</div><p x-text="t('noElementsFound')"></p></div>
+                      </template>
+                    </div>
+                  </template>
+                  <template x-if="!activeResult() || activeResult()?.status !== 'success'">
+                    <div class="empty-state"><div class="icon">📋</div><p x-text="t('noResult')"></p></div>
+                  </template>
+                </div>
+              </template>
+
+              <!-- 미디어 탭 -->
+              <template x-if="resultTab === 'media'">
+                <div>
+                  <template x-if="(activeResult()?.media?.length || 0) > 0">
+                    <div>
+                      <div class="flex items-center gap-2 flex-wrap mb-3">
+                        <span class="text-sm text-slate-500 dark:text-slate-400">
+                          <span x-text="t('mediaTotal')"></span>
+                          <strong x-text="activeResult()?.media?.length"></strong>
+                          <span x-text="t('mediaItems')"></span>
+                        </span>
+                        <select x-model="mediaTypeFilter" class="border border-slate-200 dark:border-slate-700 rounded px-2 py-0.5 text-xs bg-white dark:bg-slate-800 dark:text-slate-100">
+                          <option value="" x-text="t('allTypes')"></option>
+                          <option value="image" x-text="getElemTypeLabel('image')"></option>
+                          <option value="table" x-text="getElemTypeLabel('table')"></option>
+                          <option value="chart" x-text="getElemTypeLabel('chart')"></option>
+                          <option value="formula" x-text="getElemTypeLabel('formula')"></option>
+                        </select>
+                      </div>
+                      <!-- 미디어 썸네일 그리드 -->
+                      <div class="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                        <template x-for="m in filteredMedia()" :key="m.id">
+                          <div class="border border-slate-200 dark:border-slate-700 rounded-lg overflow-hidden cursor-pointer hover:border-blue-400 hover:shadow-md transition-all bg-white dark:bg-slate-800 group"
+                               @click="openMedia(m)">
+                            <div class="bg-slate-100 dark:bg-slate-900 flex items-center justify-center" style="height:120px">
+                              <img :src="m.url" :alt="m.type" loading="lazy"
+                                   class="max-w-full max-h-full object-contain group-hover:scale-105 transition-transform">
+                            </div>
+                            <div class="px-2 py-1.5 flex items-center gap-1.5">
+                              <span class="elem-badge" :class="`elem-${m.type}`" x-text="getElemTypeLabel(m.type)"></span>
+                              <span class="text-xs text-slate-400 dark:text-slate-500" x-text="`p.${m.page+1}`"></span>
+                              <span class="text-xs text-slate-300 dark:text-slate-600 ml-auto" x-text="`${m.width}×${m.height}`"></span>
+                            </div>
+                          </div>
+                        </template>
+                      </div>
+                      <template x-if="filteredMedia().length === 0">
+                        <div class="empty-state"><div class="icon">🖼️</div><p x-text="t('noElementsFound')"></p></div>
+                      </template>
+                    </div>
+                  </template>
+                  <template x-if="!activeResult() || (activeResult()?.media?.length || 0) === 0">
+                    <div class="empty-state">
+                      <div class="icon">🖼️</div>
+                      <p x-text="t('noMedia')"></p>
+                    </div>
+                  </template>
+                </div>
+              </template>
+
+              <!-- 레이아웃 탭 -->
+              <template x-if="resultTab === 'layout'">
+                <div>
+                  <template x-if="activeResult()?.status === 'success' && hasLayoutData()">
+                    <div>
+                      <!-- 요약 -->
+                      <div class="flex items-center gap-3 flex-wrap mb-4 text-xs text-slate-500 dark:text-slate-400">
+                        <span><strong class="text-slate-700 dark:text-slate-200" x-text="layoutPages().length"></strong> 페이지</span>
+                        <span>·</span>
+                        <span>좌표 있는 요소 <strong class="text-slate-700 dark:text-slate-200" x-text="(activeResult()?.elements||[]).filter(e=>e.bbox).length"></strong>개</span>
+                        <span class="ml-auto text-slate-300 dark:text-slate-600">페이지 클릭 → PDF 뷰어 이동</span>
+                      </div>
+                      <!-- 페이지 미니맵 그리드 -->
+                      <div class="grid grid-cols-2 sm:grid-cols-3 gap-4">
+                        <template x-for="page in layoutPages()" :key="page.page_num">
+                          <div class="flex flex-col gap-1 cursor-pointer group" @click="scrollToPage(page.page_num)">
+                            <div class="text-xs text-slate-400 dark:text-slate-500 text-center"
+                                 x-text="`${page.page_num+1}페이지  ·  ${(page.elements||[]).filter(e=>e.bbox).length}개 요소`"></div>
+                            <div class="border border-slate-200 dark:border-slate-600 rounded overflow-hidden bg-white group-hover:border-blue-400 transition-colors shadow-sm"
+                                 :style="`aspect-ratio:${page.width||595}/${page.height||842}`"
+                                 x-html="layoutPageSvg(page)"></div>
+                          </div>
+                        </template>
+                      </div>
+                      <!-- 범례 -->
+                      <div class="mt-5 flex flex-wrap gap-x-3 gap-y-1 pt-3 border-t border-slate-100 dark:border-slate-700">
+                        <span class="text-xs text-slate-400 dark:text-slate-500 w-full mb-0.5">요소 타입 색상 (숫자 = 읽기 순서)</span>
+                        <template x-for="item in layoutUsedTypes()" :key="item.type">
+                          <span class="flex items-center gap-1 text-xs text-slate-600 dark:text-slate-300">
+                            <span class="inline-block w-3 h-3 rounded-sm border"
+                                  :style="`background:${item.color}30; border-color:${item.color}`"></span>
+                            <span x-text="item.label"></span>
+                          </span>
+                        </template>
+                      </div>
+                    </div>
+                  </template>
+                  <template x-if="activeResult()?.status === 'success' && !hasLayoutData()">
+                    <div class="empty-state">
+                      <div class="icon">📐</div>
+                      <p class="whitespace-pre-line text-center" x-text="t('noLayoutBbox')"></p>
+                    </div>
+                  </template>
+                  <template x-if="!activeResult() || activeResult()?.status !== 'success'">
+                    <div class="empty-state"><div class="icon">📐</div><p x-text="t('noResult')"></p></div>
+                  </template>
+                </div>
+              </template>
+
+              <!-- JSON 탭 -->
+              <template x-if="resultTab === 'json'">
+                <div class="h-full flex flex-col">
+                  <template x-if="activeResult()">
+                    <pre class="code-preview json-fill flex-1" x-text="JSON.stringify(activeResult(), null, 2)"></pre>
+                  </template>
+                  <template x-if="!activeResult()">
+                    <div class="empty-state"><div class="icon">{ }</div><p x-text="t('noResult')"></p></div>
+                  </template>
+                </div>
+              </template>
+
+            </div>
+          </div>
+        </div>
+      </div><!-- end viewer -->
+
+      <!-- ═══ 파서 추천 뷰 ══════════════════════════════════ -->
+      <div x-show="view==='analysis'" class="p-6 overflow-auto h-full">
+        <div class="max-w-3xl mx-auto">
+          <h2 class="text-xl font-bold text-slate-800 dark:text-slate-100 mb-1" x-text="t('parserRecommend')"></h2>
+
+          <!-- 문서 미선택 안내 배너 -->
+          <div x-show="!selectedDoc"
+               class="flex items-center gap-2 mb-4 px-4 py-2.5 bg-blue-50 dark:bg-blue-950/50 border border-blue-200 dark:border-blue-800 rounded-xl text-sm text-blue-700 dark:text-blue-300">
+            <span>👈</span>
+            <span>좌측 목록에서 PDF 문서를 선택하면 파서 추천 분석이 자동으로 시작됩니다.</span>
+          </div>
+
+          <!-- 분석 대상 문서 (썸네일 + 정보) -->
+          <div class="flex items-center gap-3 mb-4 p-3 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl">
+            <template x-if="selectedDoc">
+              <img :src="selectedDoc.thumbnail_b64" class="w-12 h-16 object-cover rounded border border-slate-200 dark:border-slate-600 flex-shrink-0 bg-slate-100 dark:bg-slate-900"
+                   onerror="this.style.opacity=0.3">
+            </template>
+            <template x-if="!selectedDoc">
+              <div class="w-12 h-16 rounded border-2 border-dashed border-slate-300 dark:border-slate-600 flex-shrink-0 flex items-center justify-center text-xl text-slate-300 dark:text-slate-600">📄</div>
+            </template>
+            <div class="overflow-hidden flex-1">
+              <div class="text-xs text-slate-400 dark:text-slate-500 mb-0.5">📄 분석 대상 문서</div>
+              <div class="text-sm font-semibold text-slate-800 dark:text-slate-100 truncate"
+                   x-text="selectedDoc ? selectedDoc.filename : '선택된 문서 없음'"></div>
+              <div class="text-xs text-slate-500 dark:text-slate-400"
+                   x-text="selectedDoc ? `${selectedDoc.page_count}페이지 · ${formatSize(selectedDoc.size)}` : '좌측 목록에서 PDF를 선택하면 분석이 시작됩니다'"></div>
+            </div>
+            <div x-show="selectedDoc" class="ml-auto text-xs text-slate-400 dark:text-slate-500 text-right">
+              다른 문서를 분석하려면<br>좌측에서 선택하세요
+            </div>
+          </div>
+          <p class="text-sm text-slate-500 dark:text-slate-400 mb-3" x-text="t('parserRecommendDesc2')"></p>
+
+          <!-- 빠른/심층 분석 토글 -->
+          <div class="flex items-center gap-2 mb-5 flex-wrap">
+            <button @click="runAnalysis(false)" :disabled="analysisLoading || !selectedDoc"
+                    class="text-sm px-3 py-1.5 rounded-lg border transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                    :class="!isDeepAnalysis ? 'bg-blue-600 text-white border-transparent' : 'border-slate-300 dark:border-slate-600 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700'">
+              ⚡ 빠른 분석
+            </button>
+            <button @click="runAnalysis(true)" :disabled="analysisLoading || !selectedDoc"
+                    class="text-sm px-3 py-1.5 rounded-lg border transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                    :class="isDeepAnalysis ? 'bg-blue-600 text-white border-transparent' : 'border-slate-300 dark:border-slate-600 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700'">
+              🔬 심층 분석 (스캔 문서 OCR)
+            </button>
+            <span class="text-xs text-slate-400 dark:text-slate-500">
+              빠른 분석: PyMuPDF 측정(&lt;1초) · 심층 분석: 스캔 시 샘플 1페이지 OCR(10~30초)
+            </span>
+          </div>
+
+          <!-- 로딩 -->
+          <template x-if="analysisLoading">
+            <div class="flex items-center gap-3 text-slate-500 dark:text-slate-400 py-8">
+              <span class="spinner"></span> <span x-text="t('analyzing')"></span>
+            </div>
+          </template>
+
+          <!-- 분석 결과 / 플레이스홀더 (항상 레이아웃 표시) -->
+          <template x-if="!analysisLoading">
+            <div class="space-y-5">
+
+              <!-- PDF 타입 카드 -->
+              <div class="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl p-5">
+                <div class="flex items-start gap-3">
+                  <span class="text-3xl" x-text="analysisReport ? (analysisReport.pdf_type === 'scanned' ? '📷' : (analysisReport.pdf_type === 'digital' ? '📝' : '📄')) : '📄'"></span>
+                  <div>
+                    <h3 class="font-semibold text-slate-800 dark:text-slate-100"
+                        x-text="analysisReport ? analysisReport.pdf_type_label : '—'"></h3>
+                    <p class="text-sm text-slate-500 dark:text-slate-400 mt-1"
+                       x-text="analysisReport ? analysisReport.pdf_type_desc : '문서를 선택하고 분석을 실행하면 PDF 유형이 표시됩니다.'"></p>
+                  </div>
+                </div>
+
+                <!-- 통계 -->
+                <div class="grid grid-cols-3 gap-4 mt-4 pt-4 border-t border-slate-100 dark:border-slate-700">
+                  <div class="text-center">
+                    <div class="text-xl font-bold text-slate-800 dark:text-slate-100"
+                         x-text="analysisReport?.stats?.page_count ?? 0"></div>
+                    <div class="text-xs text-slate-500 dark:text-slate-400">페이지</div>
+                  </div>
+                  <div class="text-center">
+                    <div class="text-xl font-bold text-slate-800 dark:text-slate-100"
+                         x-text="analysisReport?.stats ? (analysisReport.stats.file_size_kb > 1024 ? (analysisReport.stats.file_size_kb/1024).toFixed(1)+'MB' : analysisReport.stats.file_size_kb+'KB') : '0 KB'"></div>
+                    <div class="text-xs text-slate-500 dark:text-slate-400">파일 크기</div>
+                  </div>
+                  <div class="text-center">
+                    <div class="text-xl font-bold text-slate-800 dark:text-slate-100"
+                         x-text="analysisReport?.stats?.avg_chars_per_page ?? 0"></div>
+                    <div class="text-xs text-slate-500 dark:text-slate-400">페이지당 평균 글자</div>
+                  </div>
+                </div>
+
+                <!-- 추가 통계 -->
+                <div class="grid grid-cols-4 gap-3 mt-3 text-center">
+                  <div>
+                    <div class="text-sm font-semibold text-slate-700 dark:text-slate-200"
+                         x-text="analysisReport?.stats?.image_count ?? 0"></div>
+                    <div class="text-xs text-slate-400 dark:text-slate-500">이미지</div>
+                  </div>
+                  <div>
+                    <div class="text-sm font-semibold text-slate-700 dark:text-slate-200"
+                         x-text="analysisReport?.stats ? (analysisReport.stats.column_estimate||1)+'단' : '—'"></div>
+                    <div class="text-xs text-slate-400 dark:text-slate-500">레이아웃</div>
+                  </div>
+                  <div>
+                    <div class="text-sm font-semibold text-slate-700 dark:text-slate-200"
+                         x-text="analysisReport?.stats ? (analysisReport.stats.estimated_languages||[]).join(',') : '—'"></div>
+                    <div class="text-xs text-slate-400 dark:text-slate-500">언어</div>
+                  </div>
+                  <div>
+                    <div class="text-sm font-semibold text-slate-700 dark:text-slate-200"
+                         x-text="analysisReport?.stats?.volume ?? '—'"></div>
+                    <div class="text-xs text-slate-400 dark:text-slate-500">분량</div>
+                  </div>
+                </div>
+
+                <!-- 특성 태그 -->
+                <div x-show="(analysisReport?.features?.length || 0) > 0" class="flex flex-wrap gap-2 mt-4">
+                  <template x-for="feat in (analysisReport?.features || [])" :key="feat.label">
+                    <div class="flex items-center gap-1.5 bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-1.5"
+                         :title="feat.detail">
+                      <span x-text="feat.icon"></span>
+                      <span class="text-xs font-medium text-slate-700 dark:text-slate-200" x-text="feat.label"></span>
+                    </div>
+                  </template>
+                </div>
+              </div>
+
+              <!-- ── 추천 결과 탭 ── -->
+              <div>
+                <div class="flex items-center gap-1 border-b border-slate-200 dark:border-slate-700 mb-4">
+                  <button class="result-tab-btn" :class="{active: recTab==='ranking'}" @click="recTab='ranking'">🏆 순위 비교</button>
+                  <button class="result-tab-btn" :class="{active: recTab==='details'}" @click="recTab='details'">📋 상세 평가</button>
+                  <button class="result-tab-btn" :class="{active: recTab==='method'}" @click="recTab='method'">🔬 분석 방법</button>
+                </div>
+
+                <!-- 순위 비교표 -->
+                <div x-show="recTab==='ranking'">
+                  <div class="flex items-center gap-2 flex-wrap mb-3 text-xs">
+                    <span class="text-slate-500 dark:text-slate-400">정렬:</span>
+                    <select x-model="recSort" class="border border-slate-300 dark:border-slate-600 rounded px-2 py-1 bg-white dark:bg-slate-800 dark:text-slate-100">
+                      <option value="score">적합도 점수순</option>
+                      <option value="name">이름순</option>
+                      <option value="category">카테고리순</option>
+                    </select>
+                    <span class="text-slate-500 dark:text-slate-400 ml-2">필터:</span>
+                    <select x-model="recCapFilter" class="border border-slate-300 dark:border-slate-600 rounded px-2 py-1 bg-white dark:bg-slate-800 dark:text-slate-100">
+                      <option value="">전체</option>
+                      <option value="installed">설치된 파서만</option>
+                      <option value="tables">표 지원</option>
+                      <option value="bbox">좌표(BBox) 지원</option>
+                      <option value="ocr">OCR 지원</option>
+                      <option value="formulas">수식 지원</option>
+                    </select>
+                  </div>
+                  <div class="overflow-x-auto rounded-xl border border-slate-200 dark:border-slate-700">
+                    <table class="w-full text-sm">
+                      <thead class="bg-slate-50 dark:bg-slate-900 text-slate-500 dark:text-slate-400 text-xs">
+                        <tr>
+                          <th class="px-2 py-2 text-center w-10">#</th>
+                          <th class="px-2 py-2 text-left">파서</th>
+                          <th class="px-2 py-2 text-center w-28">적합도</th>
+                          <th class="px-2 py-2 text-left hidden sm:table-cell">주요 강점</th>
+                          <th class="px-2 py-2 text-center w-24">작업</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        <template x-for="(rec, idx) in (analysisReport?.recommendations?.length ? sortedRecommendations() : parsersInfo.map(p => ({parser_id: p.parser_id, parser_name: p.parser_name, score: null, tier: '', reasons: [], caveats: [], color: p.color||'#94A3B8'})))" :key="rec.parser_id">
+                          <tr class="border-t border-slate-100 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800/60">
+                            <td class="px-2 py-2 text-center text-slate-400 dark:text-slate-500 font-semibold" x-text="idx+1"></td>
+                            <td class="px-2 py-2">
+                              <button @click="analysisReport ? gotoParserInfo(rec.parser_id) : null"
+                                      :class="analysisReport ? 'hover:underline cursor-pointer' : 'cursor-default'"
+                                      class="flex items-center gap-1.5 text-left group">
+                                <span class="w-2 h-2 rounded-full flex-shrink-0" :style="`background:${rec.color}`"></span>
+                                <span class="font-medium text-slate-800 dark:text-slate-100" x-text="rec.parser_name"></span>
+                                <span x-show="analysisReport" class="text-xs text-slate-300 dark:text-slate-600 group-hover:text-blue-500">ℹ</span>
+                              </button>
+                            </td>
+                            <td class="px-2 py-2">
+                              <div class="flex items-center gap-2">
+                                <div class="score-bar flex-1" style="min-width:50px">
+                                  <div class="score-bar-fill" :style="rec.score !== null ? `width:${rec.score}%; background:${rec.color}` : 'width:0%'"></div>
+                                </div>
+                                <span class="font-bold text-sm w-7 text-right"
+                                      :style="rec.score !== null ? `color:${rec.color}` : ''"
+                                      :class="rec.score === null ? 'text-slate-300 dark:text-slate-600' : ''"
+                                      x-text="rec.score !== null ? rec.score : '—'"></span>
+                              </div>
+                              <span x-show="rec.tier"
+                                    class="text-xs px-1.5 py-0.5 rounded-full font-medium inline-block mt-1"
+                                    :style="`background:${rec.color}22; color:${rec.color}`"
+                                    x-text="getTierLabel(rec.tier)"></span>
+                            </td>
+                            <td class="px-2 py-2 hidden sm:table-cell text-xs"
+                                :class="(rec.reasons||[]).length ? 'text-slate-600 dark:text-slate-300' : 'text-slate-300 dark:text-slate-600'"
+                                x-text="(rec.reasons||[]).length ? (rec.reasons||[]).slice(0,2).join(' · ') : '분석 후 표시'"></td>
+                            <td class="px-2 py-2 text-center whitespace-nowrap">
+                              <button @click="analysisReport ? useRecommendedParser(rec.parser_id) : null"
+                                      :disabled="!analysisReport"
+                                      class="text-xs px-2 py-1 rounded-lg transition-colors"
+                                      :class="analysisReport ? 'bg-blue-600 hover:bg-blue-700 text-white' : 'bg-slate-200 dark:bg-slate-700 text-slate-400 dark:text-slate-500 cursor-not-allowed'">분석</button>
+                            </td>
+                          </tr>
+                        </template>
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+
+                <!-- 상세 평가 (카드) -->
+                <div x-show="recTab==='details'" class="space-y-3">
+                  <template x-for="rec in (analysisReport?.recommendations?.length ? sortedRecommendations() : parsersInfo.map(p => ({parser_id: p.parser_id, parser_name: p.parser_name, score: null, tier: '', reasons: [], caveats: [], color: p.color||'#94A3B8'})))" :key="rec.parser_id">
+                    <div class="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl p-4 pl-5"
+                         :class="rec.tier ? `tier-${rec.tier}` : ''">
+                      <div class="flex items-center gap-3">
+                        <div class="flex-1">
+                          <div class="flex items-center gap-2 mb-1">
+                            <button @click="analysisReport ? gotoParserInfo(rec.parser_id) : null"
+                                    :class="analysisReport ? 'hover:underline' : 'cursor-default'"
+                                    class="font-semibold text-slate-800 dark:text-slate-100 text-sm flex items-center gap-1">
+                              <span x-text="rec.parser_name"></span>
+                              <span x-show="analysisReport" class="text-xs text-slate-300 dark:text-slate-600">ℹ</span>
+                            </button>
+                            <span x-show="rec.tier"
+                                  class="text-xs px-2 py-0.5 rounded-full font-medium"
+                                  :style="`background:${rec.color}22; color:${rec.color}`"
+                                  x-text="getTierLabel(rec.tier)"></span>
+                          </div>
+                          <div class="score-bar mb-2">
+                            <div class="score-bar-fill" :style="rec.score !== null ? `width:${rec.score}%; background:${rec.color}` : 'width:0%'"></div>
+                          </div>
+                        </div>
+                        <div class="text-2xl font-bold"
+                             :style="rec.score !== null ? `color:${rec.color}` : ''"
+                             :class="rec.score === null ? 'text-slate-300 dark:text-slate-600' : ''"
+                             x-text="rec.score !== null ? rec.score : '—'"></div>
+                      </div>
+                      <div x-show="(rec.reasons||[]).length > 0" class="mt-2">
+                        <template x-for="r in (rec.reasons||[])" :key="r">
+                          <p class="text-xs text-slate-600 dark:text-slate-300 flex items-start gap-1.5">
+                            <span class="text-green-500 mt-0.5">✓</span><span x-text="r"></span>
+                          </p>
+                        </template>
+                      </div>
+                      <div x-show="(rec.caveats||[]).length > 0" class="mt-1">
+                        <template x-for="c in (rec.caveats||[])" :key="c">
+                          <p class="text-xs text-amber-600 dark:text-amber-400 flex items-start gap-1.5">
+                            <span class="mt-0.5">⚠</span><span x-text="c"></span>
+                          </p>
+                        </template>
+                      </div>
+                      <div class="mt-2 flex gap-2">
+                        <button @click="analysisReport ? useRecommendedParser(rec.parser_id) : null"
+                                :disabled="!analysisReport"
+                                class="text-xs px-3 py-1 rounded-lg transition-colors"
+                                :class="analysisReport ? 'bg-blue-600 hover:bg-blue-700 text-white' : 'bg-slate-200 dark:bg-slate-700 text-slate-400 cursor-not-allowed'"
+                                x-text="t('useParser')"></button>
+                        <button x-show="analysisReport" @click="gotoParserInfo(rec.parser_id)"
+                                class="text-xs bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200 px-3 py-1 rounded-lg transition-colors">ℹ 파서 정보</button>
+                      </div>
+                    </div>
+                  </template>
+                </div>
+
+                <!-- 분석 방법 -->
+                <div x-show="recTab==='method'" class="space-y-3">
+                  <div x-show="analysisReport?.deep?.done"
+                       class="bg-emerald-50 dark:bg-emerald-950 border border-emerald-200 dark:border-emerald-800 rounded-xl p-4">
+                    <div class="flex items-center gap-2 mb-2">
+                      <span class="text-lg">🔬</span>
+                      <h3 class="font-semibold text-emerald-800 dark:text-emerald-300 text-sm">심층 OCR 검증 결과</h3>
+                    </div>
+                    <p class="text-sm text-emerald-700 dark:text-emerald-300">
+                      스캔 문서의 샘플 1페이지를 실제 OCR한 결과:
+                      <strong x-text="analysisReport?.deep?.ocr_chars + '자'"></strong> 추출,
+                      감지 언어 <strong x-text="(analysisReport?.deep?.ocr_languages||[]).join(', ') || '미상'"></strong>
+                    </p>
+                    <pre x-show="analysisReport?.deep?.ocr_text"
+                         class="text-xs text-emerald-900 dark:text-emerald-200 bg-white/60 dark:bg-black/20 rounded p-2 mt-2 whitespace-pre-wrap max-h-28 overflow-auto"
+                         x-text="analysisReport?.deep?.ocr_text"></pre>
+                  </div>
+                  <p class="text-xs text-slate-500 dark:text-slate-400">
+                    각 측면을 어떤 도구로 어떻게 측정했는지, 그리고 그 방법의 한계를 투명하게 공개합니다.
+                    이 분석은 빠른 진단용이며, 정확한 결과는 실제 파서 실행으로 확인하세요.
+                  </p>
+                  <!-- 실제 방법 목록 -->
+                  <template x-for="m in (analysisReport?.methods || [])" :key="m.aspect">
+                    <div class="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg p-3">
+                      <div class="flex items-center gap-2 flex-wrap">
+                        <span class="text-xs font-semibold text-slate-700 dark:text-slate-200" x-text="m.aspect"></span>
+                        <span class="text-xs px-1.5 py-0.5 rounded"
+                              :class="m.confidence==='높음' ? 'bg-green-100 dark:bg-green-900 text-green-700 dark:text-green-300' : (m.confidence==='중간' ? 'bg-amber-100 dark:bg-amber-900 text-amber-700 dark:text-amber-300' : 'bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300')"
+                              x-text="'신뢰도 '+m.confidence"></span>
+                        <span class="text-xs text-slate-400 dark:text-slate-500" x-text="m.tool"></span>
+                        <span class="text-xs font-medium text-blue-600 dark:text-blue-400 ml-auto" x-text="m.value"></span>
+                      </div>
+                      <p class="text-xs text-slate-500 dark:text-slate-400 mt-1" x-text="'방법: ' + m.method"></p>
+                      <p class="text-xs text-amber-600 dark:text-amber-400 mt-0.5" x-text="'⚠ 한계: ' + m.limitation"></p>
+                    </div>
+                  </template>
+                  <!-- 분석 전 플레이스홀더 -->
+                  <div x-show="!(analysisReport?.methods?.length)" class="space-y-2">
+                    <template x-for="aspect in ['텍스트 레이어 (PyMuPDF)', '이미지 (get_image_info)', '표 (격자 패턴)', '차트/도형 (벡터 그래픽)', '수식 (기호 밀도)', '언어 (langdetect)', '레이아웃 (블록 좌표)']" :key="aspect">
+                      <div class="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg p-3 opacity-50">
+                        <div class="flex items-center gap-2">
+                          <span class="text-xs font-semibold text-slate-700 dark:text-slate-200" x-text="aspect"></span>
+                          <span class="text-xs px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-700 text-slate-400 dark:text-slate-500">신뢰도 —</span>
+                          <span class="text-xs text-slate-300 dark:text-slate-600 ml-auto">—</span>
+                        </div>
+                        <p class="text-xs text-slate-400 dark:text-slate-600 mt-1">분석을 실행하면 측정값과 한계가 표시됩니다.</p>
+                      </div>
+                    </template>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </template>
+        </div>
+      </div><!-- end analysis -->
+
+      <!-- ═══ 파서 정보 뷰 ══════════════════════════════════ -->
+      <div x-show="view==='parsers'" class="p-6 overflow-auto h-full">
+        <!-- ── 파서 분석결과 (품질 × 처리속도 산점도) — 맨 위 ── -->
+        <template x-if="scatterChart().points.length">
+          <div class="mb-7">
+            <h2 class="text-xl font-bold text-slate-800 dark:text-slate-100 mb-1">📊 파서 분석결과</h2>
+            <p class="text-sm text-slate-500 dark:text-slate-400 mb-3">샘플문서 실측 기반 품질 × 처리속도 비교</p>
+            <div class="rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800/60 p-4">
+              <div class="flex items-center justify-between mb-1">
+                <h3 class="text-sm font-semibold text-slate-700 dark:text-slate-200">품질 × 처리속도 비교</h3>
+                <span class="text-xs text-slate-400 dark:text-slate-500">실측(샘플 4종 1페이지 평균) · 점이 오른쪽 위일수록 빠르고 정확</span>
+              </div>
+              <div class="overflow-x-auto" x-html="scatterSVG()"></div>
+              <p class="mt-2 text-xs text-slate-400 dark:text-slate-500 leading-relaxed">
+                <span class="font-medium text-slate-500 dark:text-slate-400">*한계점: </span>
+                샘플문서 4종(논문·손글씨·잡지·한글계획서) 각 1페이지만으로 측정한 결과이며, GPU 없이 CPU만 사용한 환경입니다.
+                품질 점수는 측정값과 일반적 특성을 종합한 상대 지표이고, 문서 종류·설정·하드웨어에 따라 결과가 크게 달라질 수 있습니다.
+                olmOCR(GPU 필요)·Gemini(API 키 미설정)는 미실행으로 제외되었습니다.
+              </p>
+            </div>
+          </div>
+        </template>
+
+        <h2 class="text-xl font-bold text-slate-800 dark:text-slate-100 mb-1" x-text="t('supportedParsers')"></h2>
+        <p class="text-sm text-slate-500 dark:text-slate-400 mb-5"><span x-text="parsersInfo.length"></span> <span x-text="t('totalParsers')"></span>. <span class="text-green-600 dark:text-green-400 font-medium" x-text="parsersInfo.filter(p=>p.is_available).length"></span> <span x-text="t('installedCount')"></span>.</p>
+
+        <!-- 검색 + 필터 + 뷰 전환 -->
+        <div class="flex gap-2 mb-5 flex-wrap items-center">
+          <!-- 키워드 검색 -->
+          <div class="relative">
+            <input type="text" x-model="parserSearch" placeholder="🔍 파서 검색 (이름·설명·기능)"
+                   autocomplete="new-password" spellcheck="false"
+                   class="border border-slate-300 dark:border-slate-600 rounded-lg pl-3 pr-7 py-1.5 text-sm bg-white dark:bg-slate-800 dark:text-slate-100 w-56 focus:ring-2 focus:ring-blue-500">
+            <button x-show="parserSearch" @click="parserSearch=''"
+                    class="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 text-sm">✕</button>
+          </div>
+          <select x-model="parserFilter" class="border border-slate-300 dark:border-slate-600 rounded-lg px-3 py-1.5 text-sm bg-white dark:bg-slate-800 dark:text-slate-100">
+            <option value="" x-text="t('filterAll')"></option>
+            <option>기본 PDF 엔진</option><option>LLM/RAG용 변환</option><option>LLM용 경량 변환</option>
+            <option>고급 문서 변환</option><option>고급 PDF → Markdown</option><option>과학문헌 특화</option>
+            <option>문서 ETL/RAG</option><option>PDF 좌표/표 추출</option><option>PDF 텍스트 추출</option>
+            <option>PDF 조작/간단 추출</option><option>표 추출 특화</option><option>OCR/문서 구조 분석</option>
+            <option>OCR PDF 생성</option><option>OCR 엔진</option><option>VLM 기반 PDF OCR</option>
+            <option>VLM 기반 파서</option>
+          </select>
+          <select x-model="parserSort" class="border border-slate-300 dark:border-slate-600 rounded-lg px-3 py-1.5 text-sm bg-white dark:bg-slate-800 dark:text-slate-100">
+            <option value="default">기본 순서</option>
+            <option value="name">이름순</option>
+            <option value="category">카테고리순</option>
+            <option value="installed">설치 여부순</option>
+          </select>
+          <label class="flex items-center gap-1.5 text-sm text-slate-600 dark:text-slate-300">
+            <input type="checkbox" x-model="showOnlyAvailable">
+            <span x-text="t('showInstalled')"></span>
+          </label>
+          <!-- 카드/리스트 뷰 전환 -->
+          <div class="ml-auto flex items-center border border-slate-300 dark:border-slate-600 rounded-lg overflow-hidden">
+            <button @click="parserView='card'" class="px-2.5 py-1.5 text-sm transition-colors"
+                    :class="parserView==='card' ? 'bg-blue-600 text-white' : 'text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700'"
+                    title="카드 보기">▦</button>
+            <button @click="parserView='list'" class="px-2.5 py-1.5 text-sm transition-colors"
+                    :class="parserView==='list' ? 'bg-blue-600 text-white' : 'text-slate-500 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-700'"
+                    title="리스트 보기">☰</button>
+          </div>
+        </div>
+
+        <p class="text-xs text-slate-400 dark:text-slate-500 mb-3" x-show="filteredParsers().length !== parsersInfo.length">
+          <span x-text="filteredParsers().length"></span>개 표시 중 (전체 <span x-text="parsersInfo.length"></span>개)
+        </p>
+
+        <!-- ── 리스트 뷰 (속성 테이블, 정렬) ── -->
+        <div x-show="parserView==='list'" class="overflow-x-auto rounded-xl border border-slate-200 dark:border-slate-700">
+          <table class="w-full text-sm">
+            <thead class="bg-slate-50 dark:bg-slate-900 text-slate-500 dark:text-slate-400 text-xs">
+              <tr>
+                <th class="px-3 py-2 text-left cursor-pointer hover:text-blue-500" @click="parserSort='name'">파서 ▾</th>
+                <th class="px-3 py-2 text-left cursor-pointer hover:text-blue-500" @click="parserSort='category'">카테고리</th>
+                <th class="px-2 py-2 text-center">텍스트</th>
+                <th class="px-2 py-2 text-center">BBox</th>
+                <th class="px-2 py-2 text-center">표</th>
+                <th class="px-2 py-2 text-center">이미지</th>
+                <th class="px-2 py-2 text-center">수식</th>
+                <th class="px-2 py-2 text-center">OCR</th>
+                <th class="px-2 py-2 text-center">언어</th>
+                <th class="px-2 py-2 text-center">GPU</th>
+                <th class="px-2 py-2 text-center">속도</th>
+                <th class="px-2 py-2 text-center" title="샘플문서 4종 실측 성공률·평균시간">실측</th>
+                <th class="px-2 py-2 text-center cursor-pointer hover:text-blue-500" @click="parserSort='installed'">상태</th>
+                <th class="px-2 py-2 text-center">링크</th>
+              </tr>
+            </thead>
+            <tbody>
+              <template x-for="p in filteredParsers()" :key="p.parser_id">
+                <tr class="border-t border-slate-100 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800/60"
+                    :id="`parser-row-${p.parser_id}`"
+                    :class="{ 'ring-2 ring-blue-500': highlightedParserId === p.parser_id }">
+                  <td class="px-3 py-2">
+                    <div class="flex items-center gap-1.5">
+                      <span class="w-2 h-2 rounded-full flex-shrink-0" :style="`background:${p.color}`"></span>
+                      <span class="font-medium text-slate-800 dark:text-slate-100" x-text="p.parser_name"></span>
+                    </div>
+                    <div class="text-xs text-slate-400 dark:text-slate-500 max-w-xs truncate" x-text="p.description"></div>
+                  </td>
+                  <td class="px-3 py-2 text-xs text-slate-500 dark:text-slate-400" x-text="p.category"></td>
+                  <td class="px-2 py-2 text-center" x-text="p.supports_text ? '✓' : '·'" :class="p.supports_text ? 'text-green-500' : 'text-slate-300 dark:text-slate-600'"></td>
+                  <td class="px-2 py-2 text-center" x-text="p.supports_bbox ? '✓' : '·'" :class="p.supports_bbox ? 'text-green-500' : 'text-slate-300 dark:text-slate-600'"></td>
+                  <td class="px-2 py-2 text-center" x-text="p.supports_tables ? '✓' : '·'" :class="p.supports_tables ? 'text-green-500' : 'text-slate-300 dark:text-slate-600'"></td>
+                  <td class="px-2 py-2 text-center" x-text="p.supports_images ? '✓' : '·'" :class="p.supports_images ? 'text-green-500' : 'text-slate-300 dark:text-slate-600'"></td>
+                  <td class="px-2 py-2 text-center" x-text="p.supports_formulas ? '✓' : '·'" :class="p.supports_formulas ? 'text-green-500' : 'text-slate-300 dark:text-slate-600'"></td>
+                  <td class="px-2 py-2 text-center" x-text="p.supports_ocr ? '✓' : '·'" :class="p.supports_ocr ? 'text-green-500' : 'text-slate-300 dark:text-slate-600'"></td>
+                  <td class="px-2 py-2 text-center text-xs text-slate-600 dark:text-slate-300" x-text="langSummary(p)"
+                      :title="(p.ocr_languages||[]).join(', ')"></td>
+                  <td class="px-2 py-2 text-center">
+                    <span class="text-xs px-1.5 py-0.5 rounded-full" :class="gpuBadge(p.gpu_requirement).cls" x-text="gpuBadge(p.gpu_requirement).label"></span>
+                  </td>
+                  <td class="px-2 py-2 text-center">
+                    <span class="text-xs px-1.5 py-0.5 rounded-full" :class="speedBadge(p.processing_speed).cls" x-text="speedBadge(p.processing_speed).label"></span>
+                  </td>
+                  <td class="px-2 py-2 text-center whitespace-nowrap">
+                    <template x-if="p.experience">
+                      <button @click="openExperience(p)"
+                              class="inline-flex items-center gap-1 text-xs px-1.5 py-0.5 rounded-full hover:ring-2 hover:ring-blue-400 transition"
+                              :class="expRateCls(expRate(p))"
+                              :title="`성공 ${p.experience.success}/${p.experience.tested}` + (p.experience.avg_time!=null ? ` · 평균 ${p.experience.avg_time}s` : '') + ' · 클릭하면 상세'">
+                        <span x-text="expRate(p)!==null ? expRate(p)+'%' : '—'"></span>
+                        <span x-show="p.experience.avg_time!=null" class="opacity-70" x-text="p.experience.avg_time+'s'"></span>
+                        <span>📋</span>
+                      </button>
+                    </template>
+                    <span x-show="!p.experience" class="text-slate-300 dark:text-slate-600 text-xs">—</span>
+                  </td>
+                  <td class="px-2 py-2 text-center">
+                    <span class="text-xs px-1.5 py-0.5 rounded-full" :class="p.is_available ? 'bg-green-100 dark:bg-green-900/50 text-green-700 dark:text-green-300' : 'bg-amber-100 dark:bg-amber-900/50 text-amber-700 dark:text-amber-300'"
+                          x-text="p.is_available ? '설치됨' : '미설치'"></span>
+                  </td>
+                  <td class="px-2 py-2 text-center whitespace-nowrap">
+                    <a :href="p.github_url" target="_blank" class="text-blue-600 dark:text-blue-400 hover:underline text-xs">GitHub</a>
+                  </td>
+                </tr>
+              </template>
+            </tbody>
+          </table>
+        </div>
+
+        <!-- ── 카드 뷰 ── -->
+        <div x-show="parserView==='card'" class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+          <template x-for="p in filteredParsers()" :key="p.parser_id">
+            <div class="parser-info-card" :id="`parser-card-${p.parser_id}`"
+                 :class="{ 'ring-2 ring-blue-500': highlightedParserId === p.parser_id }">
+              <div class="flex items-start justify-between mb-2">
+                <div>
+                  <div class="flex items-center gap-2">
+                    <span class="w-3 h-3 rounded-full flex-shrink-0" :style="`background:${p.color}`"></span>
+                    <h3 class="font-semibold text-slate-800 dark:text-slate-100 text-sm" x-text="p.parser_name"></h3>
+                  </div>
+                  <span class="text-xs text-slate-400 dark:text-slate-500" x-text="p.category"></span>
+                </div>
+                <span class="status-badge" :class="p.is_available ? 'available' : 'unavailable'"
+                      x-text="p.is_available ? t('installedLabel') : t('notInstalledLabel')"></span>
+              </div>
+
+              <p class="text-xs text-slate-600 dark:text-slate-300 mb-3 leading-relaxed" x-text="p.description"></p>
+
+              <!-- 기능 태그 -->
+              <div class="flex flex-wrap gap-1 mb-3">
+                <span x-show="p.supports_text" class="text-xs bg-blue-50 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300 px-1.5 py-0.5 rounded">텍스트</span>
+                <span x-show="p.supports_bbox" class="text-xs bg-purple-50 text-purple-700 dark:bg-purple-900/40 dark:text-purple-300 px-1.5 py-0.5 rounded">BBox</span>
+                <span x-show="p.supports_tables" class="text-xs bg-green-50 text-green-700 dark:bg-green-900/40 dark:text-green-300 px-1.5 py-0.5 rounded">표</span>
+                <span x-show="p.supports_images" class="text-xs bg-orange-50 text-orange-700 dark:bg-orange-900/40 dark:text-orange-300 px-1.5 py-0.5 rounded">이미지</span>
+                <span x-show="p.supports_formulas" class="text-xs bg-pink-50 text-pink-700 dark:bg-pink-900/40 dark:text-pink-300 px-1.5 py-0.5 rounded">수식</span>
+                <span x-show="p.supports_ocr" class="text-xs bg-red-50 text-red-700 dark:bg-red-900/40 dark:text-red-300 px-1.5 py-0.5 rounded">OCR</span>
+              </div>
+
+              <!-- 설치 명령 -->
+              <div x-show="!p.is_available" class="bg-slate-800 rounded px-2 py-1.5 font-mono text-xs text-green-400 mb-2" x-text="p.install_command"></div>
+
+              <!-- 실측 경험 요약 -->
+              <template x-if="p.experience">
+                <button @click="openExperience(p)"
+                        class="w-full mb-2 flex items-center justify-between gap-2 px-2 py-1.5 rounded-lg border border-slate-200 dark:border-slate-700 hover:ring-2 hover:ring-blue-400 transition text-left">
+                  <span class="flex items-center gap-1.5">
+                    <span class="text-xs px-1.5 py-0.5 rounded-full" :class="expRateCls(expRate(p))"
+                          x-text="(expRate(p)!==null ? expRate(p)+'%' : '—')"></span>
+                    <span class="text-xs text-slate-500 dark:text-slate-400"
+                          x-text="`실측 ${p.experience.success}/${p.experience.tested}` + (p.experience.avg_time!=null ? ` · ${p.experience.avg_time}s` : '')"></span>
+                  </span>
+                  <span class="text-xs text-blue-600 dark:text-blue-400">📋 상세의견</span>
+                </button>
+              </template>
+
+              <!-- 링크 -->
+              <div class="flex gap-3">
+                <a :href="p.github_url" target="_blank"
+                   class="text-xs text-blue-600 dark:text-blue-400 hover:underline flex items-center gap-1">
+                  <span>⬡</span> <span x-text="t('githubBtn')"></span>
+                </a>
+                <a :href="p.docs_url" target="_blank"
+                   class="text-xs text-slate-500 dark:text-slate-400 hover:underline flex items-center gap-1">
+                  📖 <span x-text="t('docsBtn')"></span>
+                </a>
+              </div>
+            </div>
+          </template>
+        </div>
+      </div><!-- end parsers -->
+
+      <!-- ═══ 설정 뷰 ══════════════════════════════════════ -->
+      <div x-show="view==='settings'" class="p-6 overflow-auto h-full max-w-2xl mx-auto">
+        <h2 class="text-xl font-bold text-slate-800 dark:text-slate-100 mb-3" x-text="t('settingsTitle')"></h2>
+
+        <!-- 설정 탭 -->
+        <div class="flex items-center gap-1 border-b border-slate-200 dark:border-slate-700 mb-5">
+          <button class="result-tab-btn" :class="{active: settingsTab==='global'}" @click="settingsTab='global'">⚙️ 전역 설정</button>
+          <button class="result-tab-btn" :class="{active: settingsTab==='llm'}"    @click="settingsTab='llm'">🤖 LLM / VLM 인증</button>
+          <button class="result-tab-btn" :class="{active: settingsTab==='parser'}" @click="settingsTab='parser'">🧩 파서별 설정</button>
+          <button class="result-tab-btn" :class="{active: settingsTab==='about'}"  @click="settingsTab='about'">📦 설치 정보</button>
+        </div>
+
+        <!-- 탭 상세 영역 (세 탭 동일 크기) -->
+        <div class="settings-tab-content min-h-[460px] mb-5">
+        <!-- 전역 설정 탭 -->
+        <div x-show="settingsTab==='global'" class="settings-section">
+          <h3 x-text="t('globalSettings')"></h3>
+          <div class="space-y-4">
+            <div>
+              <label class="block text-sm font-medium text-slate-600 dark:text-slate-300 mb-1" x-text="t('defaultLang')"></label>
+              <select x-model="appSettings.global_settings.default_language"
+                      class="border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-1.5 text-sm w-full bg-white dark:bg-slate-800 dark:text-slate-100">
+                <option value="ko">한국어 (ko)</option>
+                <option value="en">영어 (en)</option>
+                <option value="ko+en">한국어+영어 (ko+en)</option>
+                <option value="zh">중국어 (zh)</option>
+                <option value="ja">일본어 (ja)</option>
+                <option value="ar">아랍어 (ar)</option>
+              </select>
+            </div>
+            <div class="flex items-center justify-between">
+              <div>
+                <label class="text-sm font-medium text-slate-600 dark:text-slate-300" x-text="t('useGpu')"></label>
+                <p class="text-xs text-slate-400 dark:text-slate-400" x-text="t('useGpuDesc')"></p>
+              </div>
+              <label class="relative inline-flex items-center cursor-pointer">
+                <input type="checkbox" x-model="appSettings.global_settings.use_gpu" class="sr-only peer">
+                <div class="w-9 h-5 bg-slate-200 peer-focus:ring-2 rounded-full peer peer-checked:bg-blue-600
+                            after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:bg-white
+                            after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:after:translate-x-4"></div>
+              </label>
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-slate-600 dark:text-slate-300 mb-1">
+                <span x-text="t('renderDpi')"></span>: <span x-text="appSettings.global_settings.render_dpi"></span>
+              </label>
+              <input type="range" min="72" max="300" step="12"
+                     x-model.number="appSettings.global_settings.render_dpi"
+                     class="w-full accent-blue-600">
+              <div class="flex justify-between text-xs text-slate-400 dark:text-slate-400 mt-1">
+                <span>72 (빠름)</span><span>150 (기본)</span><span>300 (선명)</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- LLM/VLM API 인증 탭 -->
+        <div x-show="settingsTab==='llm'" class="settings-section">
+          <h3>🤖 LLM / VLM API 인증</h3>
+          <p class="text-xs text-slate-500 dark:text-slate-400 mb-4 -mt-2">
+            GPT, Claude, Gemini의 API 키 또는 Ollama 서버 URL을 입력하면 VLM 파서를 사용할 수 있습니다.
+            여기 저장된 값은 옵션 팝업에도 자동으로 적용됩니다.
+          </p>
+
+          <template x-for="prov in llmProviders" :key="prov.id">
+            <div class="mb-4 pb-4 border-b border-slate-100 dark:border-slate-700 last:border-0 last:mb-0 last:pb-0">
+              <div class="flex items-center gap-2 mb-2">
+                <span class="w-2.5 h-2.5 rounded-full" :style="`background:${prov.color}`"></span>
+                <span class="font-medium text-sm text-slate-700 dark:text-slate-200" x-text="prov.name"></span>
+                <span x-show="isParserAvailable(prov.id)" class="text-xs text-green-600 dark:text-green-400">SDK 설치됨</span>
+                <span x-show="!isParserAvailable(prov.id)" class="text-xs text-amber-500"
+                      x-text="'미설치: ' + prov.install"></span>
+                <a :href="prov.keyUrl" target="_blank" x-show="prov.keyUrl"
+                   class="text-xs text-blue-600 dark:text-blue-400 hover:underline ml-auto">🔑 키 발급</a>
+              </div>
+
+              <!-- API 키 (OpenAI/Claude/Gemini) -->
+              <template x-if="prov.needsKey">
+                <div class="relative mb-2">
+                  <input :type="showLlmKey[prov.id] ? 'text' : 'password'"
+                         :value="getLlmCred(prov.id, 'api_key')"
+                         @input="setLlmCred(prov.id, 'api_key', $event.target.value)"
+                         :placeholder="prov.keyPlaceholder"
+                         class="w-full border border-slate-300 dark:border-slate-600 rounded-lg px-3 py-2 pr-10 text-sm bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-100 focus:ring-2 focus:ring-blue-500 font-mono">
+                  <button @click="showLlmKey[prov.id] = !showLlmKey[prov.id]"
+                          class="absolute right-2 top-1/2 -translate-y-1/2 text-sm">
+                    <span x-text="showLlmKey[prov.id] ? '🙈' : '👁'"></span>
+                  </button>
+                </div>
+              </template>
+
+              <!-- 서버 URL (Ollama / 커스텀 엔드포인트) -->
+              <template x-if="prov.needsUrl">
+                <input type="text"
+                       :value="getLlmCred(prov.id, 'base_url') || prov.urlDefault"
+                       @input="setLlmCred(prov.id, 'base_url', $event.target.value)"
+                       :placeholder="prov.urlDefault"
+                       class="w-full border border-slate-300 dark:border-slate-600 rounded-lg px-3 py-2 text-sm bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-100 focus:ring-2 focus:ring-blue-500 font-mono mb-1">
+              </template>
+
+              <p class="text-xs text-slate-400 dark:text-slate-500" x-text="prov.hint"></p>
+            </div>
+          </template>
+        </div>
+
+        <!-- 파서별 설정 (파서별 탭) -->
+        <div x-show="settingsTab==='parser'">
+        <p class="text-xs text-slate-500 dark:text-slate-400 mb-3">설치된 파서 중 옵션이 있는 파서들의 기본 설정값입니다. 아래 탭에서 파서를 선택하세요. (각 분석 시 ⚙옵션 팝업에서도 조정 가능)</p>
+
+        <template x-if="settingsParsers().length === 0">
+          <p class="text-sm text-slate-400 dark:text-slate-500 py-6 text-center">옵션이 있는 설치된 파서가 없습니다.</p>
+        </template>
+
+        <template x-if="settingsParsers().length > 0">
+          <div>
+            <!-- 파서 탭 (칩) -->
+            <div class="flex flex-wrap gap-1.5 mb-4 pb-3 border-b border-slate-200 dark:border-slate-700">
+              <template x-for="sp in settingsParsers()" :key="sp.parser_id">
+                <button @click="settingsParserId = sp.parser_id"
+                        class="flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-colors border"
+                        :class="activeSettingsParserId() === sp.parser_id
+                          ? 'bg-blue-600 border-blue-600 text-white'
+                          : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700'">
+                  <span class="w-2 h-2 rounded-full flex-shrink-0" :style="`background:${sp.color}`"></span>
+                  <span x-text="sp.parser_name"></span>
+                  <span class="opacity-60" x-text="'(' + Object.keys(sp.settings_schema).length + ')'"></span>
+                </button>
+              </template>
+            </div>
+
+            <!-- 선택된 파서의 설정 -->
+            <template x-for="p in settingsParsers().filter(p => p.parser_id === activeSettingsParserId())" :key="p.parser_id">
+              <div class="settings-section">
+                <h3 x-text="p.parser_name + ' 설정'"></h3>
+                <div class="space-y-3">
+                  <template x-for="(schema, key) in p.settings_schema" :key="key">
+                    <div>
+                      <label class="block text-sm font-medium text-slate-600 dark:text-slate-300 mb-1" x-text="schema.label"></label>
+                      <p x-show="schema.description" class="text-xs text-slate-400 dark:text-slate-400 mb-1" x-text="schema.description"></p>
+                      <template x-if="schema.type === 'boolean'">
+                        <label class="flex items-center gap-2 cursor-pointer">
+                          <input type="checkbox"
+                                 :checked="getParserSetting(p.parser_id, key, schema.default)"
+                                 @change="setParserSetting(p.parser_id, key, $event.target.checked)"
+                                 class="accent-blue-600">
+                          <span class="text-sm text-slate-600 dark:text-slate-300">활성화</span>
+                        </label>
+                      </template>
+                      <template x-if="schema.type === 'string'">
+                        <input type="text"
+                               :value="getParserSetting(p.parser_id, key, schema.default)"
+                               @input="setParserSetting(p.parser_id, key, $event.target.value)"
+                               class="border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-1.5 text-sm w-full bg-white dark:bg-slate-800 dark:text-slate-100">
+                      </template>
+                      <template x-if="schema.type === 'integer' || schema.type === 'number'">
+                        <input type="number"
+                               :min="schema.min" :max="schema.max"
+                               :value="getParserSetting(p.parser_id, key, schema.default)"
+                               @input="setParserSetting(p.parser_id, key, +$event.target.value)"
+                               class="border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-1.5 text-sm w-32 bg-white dark:bg-slate-800 dark:text-slate-100">
+                      </template>
+                      <template x-if="schema.type === 'select'">
+                        <select :value="getParserSetting(p.parser_id, key, schema.default)"
+                                @change="setParserSetting(p.parser_id, key, $event.target.value)"
+                                class="border border-slate-200 dark:border-slate-700 rounded-lg px-3 py-1.5 text-sm bg-white dark:bg-slate-800 dark:text-slate-100">
+                          <template x-for="(opt, oi) in schema.options" :key="opt">
+                            <option :value="opt" x-text="(schema.option_labels && schema.option_labels[oi]) ? schema.option_labels[oi] : opt"></option>
+                          </template>
+                        </select>
+                      </template>
+                    </div>
+                  </template>
+                </div>
+              </div>
+            </template>
+          </div>
+        </template>
+        </div>
+
+        <!-- 설치 정보 (파서·버전·소스) -->
+        <div x-show="settingsTab==='about'">
+          <p class="text-xs text-slate-500 dark:text-slate-400 mb-3">설치된 파서의 백킹 패키지 버전과 소스 링크입니다. (미설치 파서는 버전이 비어 있습니다.)</p>
+          <div class="overflow-x-auto rounded-xl border border-slate-200 dark:border-slate-700">
+            <table class="w-full text-sm">
+              <thead class="bg-slate-50 dark:bg-slate-900 text-slate-500 dark:text-slate-400 text-xs">
+                <tr>
+                  <th class="px-3 py-2 text-left">파서</th>
+                  <th class="px-3 py-2 text-left">패키지</th>
+                  <th class="px-3 py-2 text-left">버전</th>
+                  <th class="px-2 py-2 text-center">상태</th>
+                  <th class="px-3 py-2 text-left">소스</th>
+                </tr>
+              </thead>
+              <tbody>
+                <template x-for="p in [...parsersInfo].sort((a,b)=>a.parser_name.localeCompare(b.parser_name))" :key="p.parser_id">
+                  <tr class="border-t border-slate-100 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800/60">
+                    <td class="px-3 py-2">
+                      <div class="flex items-center gap-1.5">
+                        <span class="w-2 h-2 rounded-full flex-shrink-0" :style="`background:${p.color}`"></span>
+                        <a :href="p.github_url" target="_blank" class="font-medium text-blue-600 dark:text-blue-400 hover:underline" x-text="p.parser_name"></a>
+                      </div>
+                      <div class="text-xs text-slate-400 dark:text-slate-500" x-text="p.category"></div>
+                    </td>
+                    <td class="px-3 py-2 font-mono text-xs text-slate-600 dark:text-slate-300" x-text="p.pkg_name || '—'"></td>
+                    <td class="px-3 py-2 font-mono text-xs text-slate-600 dark:text-slate-300" x-text="p.version || '—'"></td>
+                    <td class="px-2 py-2 text-center">
+                      <span class="text-xs px-1.5 py-0.5 rounded-full"
+                            :class="p.is_available ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400' : 'bg-amber-500/10 text-amber-600 dark:text-amber-400'"
+                            x-text="p.is_available ? '설치됨' : '미설치'"></span>
+                    </td>
+                    <td class="px-3 py-2 whitespace-nowrap">
+                      <a :href="p.github_url" target="_blank" class="text-blue-600 dark:text-blue-400 hover:underline text-xs">GitHub ⬡</a>
+                      <a x-show="p.docs_url" :href="p.docs_url" target="_blank" class="ml-2 text-slate-500 dark:text-slate-400 hover:underline text-xs">📖 Docs</a>
+                    </td>
+                  </tr>
+                </template>
+              </tbody>
+            </table>
+          </div>
+          <p class="text-xs text-slate-400 dark:text-slate-500 mt-3">파서는 21종에 고정되지 않으며 계속 추가할 수 있습니다. 새 파서 추가는 개발 문서(HANDOFF) 참고.</p>
+        </div>
+        </div><!-- end settings-tab-content -->
+
+        <div class="flex gap-3" x-show="settingsTab !== 'about'">
+          <button @click="saveSettings()" class="bg-blue-600 hover:bg-blue-700 text-white px-5 py-2 rounded-lg text-sm font-medium transition-colors"
+                  x-text="t('saveBtn')"></button>
+          <button @click="resetSettings()" class="bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200 px-5 py-2 rounded-lg text-sm transition-colors"
+                  x-text="t('resetBtn')"></button>
+        </div>
+      </div><!-- end settings -->
+
+      <!-- ═══ 도움말 뷰 ═════════════════════════════════════ -->
+      <div x-show="view==='help'" class="p-6 overflow-auto h-full max-w-3xl mx-auto">
+        <h2 class="text-xl font-bold text-slate-800 dark:text-slate-100 mb-3" x-text="t('helpTitle')"></h2>
+
+        <!-- 도움말 탭 -->
+        <div class="flex items-center gap-1 border-b border-slate-200 dark:border-slate-700 mb-5 flex-wrap">
+          <button class="result-tab-btn" :class="{active: helpTab==='start'}" @click="helpTab='start'">🚀 시작하기</button>
+          <button class="result-tab-btn" :class="{active: helpTab==='features'}" @click="helpTab='features'">✨ 기능 설명</button>
+          <button class="result-tab-btn" :class="{active: helpTab==='guide'}" @click="helpTab='guide'">🔑 파서 가이드</button>
+          <button class="result-tab-btn" :class="{active: helpTab==='install'}" @click="helpTab='install'">📦 설치·배포</button>
+        </div>
+
+        <!-- ── 시작하기 ── -->
+        <div x-show="helpTab==='start'" class="space-y-4">
+          <!-- 개념 -->
+          <div class="help-card">
+            <h3>🎯 ParserTry란</h3>
+            <p class="italic text-slate-500 dark:text-slate-400">"올바른 파서는 당신의 문서와 설정에 달려 있습니다."</p>
+            <p class="mt-2">모든 PDF에 하나의 파서가 최고는 아닙니다. <strong>현재 21종</strong>의 PDF 파서를 웹에서 즉시 실행·비교해 <strong>내 문서에 가장 잘 맞는 파서를 직접 확인</strong>하는 도구입니다. 파서는 21종에 고정되지 않고 계속 확장됩니다.</p>
+            <p class="mt-2 text-xs text-slate-500 dark:text-slate-400">소개·동작화면·분석결과: <a href="https://github.com/leeryong/ParserTry" target="_blank" class="text-blue-600 dark:text-blue-400 hover:underline">github.com/leeryong/ParserTry ⬡</a></p>
+          </div>
+          <!-- 워크플로우 다이어그램 -->
+          <div class="help-card">
+            <h3>🔄 작업 흐름</h3>
+            <div class="flex items-center justify-between gap-1 mt-3 flex-wrap">
+              <div class="flex flex-col items-center gap-1 flex-1 min-w-16">
+                <div class="w-12 h-12 rounded-xl bg-blue-100 dark:bg-blue-900/50 flex items-center justify-center text-2xl">📤</div>
+                <span class="text-xs text-slate-600 dark:text-slate-300 text-center">1. 업로드</span>
+              </div>
+              <span class="text-slate-300 dark:text-slate-600 text-xl">→</span>
+              <div class="flex flex-col items-center gap-1 flex-1 min-w-16">
+                <div class="w-12 h-12 rounded-xl bg-purple-100 dark:bg-purple-900/50 flex items-center justify-center text-2xl">💡</div>
+                <span class="text-xs text-slate-600 dark:text-slate-300 text-center">2. 추천 받기</span>
+              </div>
+              <span class="text-slate-300 dark:text-slate-600 text-xl">→</span>
+              <div class="flex flex-col items-center gap-1 flex-1 min-w-16">
+                <div class="w-12 h-12 rounded-xl bg-green-100 dark:bg-green-900/50 flex items-center justify-center text-2xl">🧩</div>
+                <span class="text-xs text-slate-600 dark:text-slate-300 text-center">3. 파서 선택</span>
+              </div>
+              <span class="text-slate-300 dark:text-slate-600 text-xl">→</span>
+              <div class="flex flex-col items-center gap-1 flex-1 min-w-16">
+                <div class="w-12 h-12 rounded-xl bg-orange-100 dark:bg-orange-900/50 flex items-center justify-center text-2xl">▶️</div>
+                <span class="text-xs text-slate-600 dark:text-slate-300 text-center">4. 분석</span>
+              </div>
+              <span class="text-slate-300 dark:text-slate-600 text-xl">→</span>
+              <div class="flex flex-col items-center gap-1 flex-1 min-w-16">
+                <div class="w-12 h-12 rounded-xl bg-pink-100 dark:bg-pink-900/50 flex items-center justify-center text-2xl">🔍</div>
+                <span class="text-xs text-slate-600 dark:text-slate-300 text-center">5. 결과 비교</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="help-card">
+            <h3>🚀 빠른 시작</h3>
+            <ol class="list-decimal list-inside space-y-1.5 mt-2">
+              <li>좌측 <strong>PDF 업로드</strong> 버튼 또는 뷰어의 드래그앤드롭 영역에 PDF를 올립니다. (여러 개·압축파일도 가능)</li>
+              <li><strong>💡 파서 추천</strong>에서 현재 문서에 적합한 파서를 점수와 함께 추천받습니다.</li>
+              <li><strong>문서 뷰어</strong>에서 파서를 선택하고 <strong>범위</strong>(현재페이지/전체/구간)를 정합니다.</li>
+              <li><strong>▶ 분석</strong>을 클릭하면 진행 상황이 하단 상태바에 표시됩니다. (중지 가능)</li>
+              <li>우측 패널에서 <strong>텍스트·마크다운·요소목록·미디어·JSON</strong> 탭으로 결과를 확인합니다.</li>
+            </ol>
+          </div>
+
+          <div class="help-card">
+            <h3>🖱️ PDF ↔ 결과 연동</h3>
+            <ul class="list-disc list-inside mt-2 space-y-1">
+              <li>PDF의 <strong>오버레이 박스를 클릭</strong>하면 요소 목록에서 해당 요소가 강조됩니다.</li>
+              <li>요소 목록의 <strong>항목을 클릭</strong>하면 PDF의 해당 위치로 스크롤·강조됩니다.</li>
+              <li>여러 페이지 PDF는 <strong>연속 스크롤</strong>로 이어보며, <strong>높이맞춤/폭맞춤</strong>으로 보기를 조절합니다.</li>
+            </ul>
+          </div>
+        </div>
+
+        <!-- ── 기능 설명 ── -->
+        <div x-show="helpTab==='features'" class="space-y-4">
+          <div class="help-card">
+            <h3>💡 파서 추천 분석 (객관적 방법론)</h3>
+            <p>업로드한 문서를 측면별로 가장 신뢰도 높은 도구로 측정합니다:</p>
+            <ul class="list-disc list-inside mt-2 space-y-1">
+              <li><strong>이미지</strong>: PyMuPDF get_image_info (정확한 임베드 이미지 감지)</li>
+              <li><strong>표·차트</strong>: 벡터 그래픽(선/곡선) 패턴 분석</li>
+              <li><strong>언어</strong>: langdetect + CJK/아랍 스크립트 분석</li>
+              <li><strong>레이아웃</strong>: 폰트 수·단(컬럼) 추정</li>
+            </ul>
+            <p class="mt-2"><strong>빠른 분석</strong>(&lt;1초)과 <strong>심층 분석</strong>(스캔 문서 샘플 OCR)을 선택할 수 있고, 각 측정의 <strong>도구·신뢰도·한계</strong>를 투명하게 공개합니다.</p>
+          </div>
+
+          <div class="help-card">
+            <h3>📊 파서 분석결과 (실측)</h3>
+            <p><strong>파서 정보</strong> 메뉴 상단에 샘플문서 실측 기반 <strong>품질 × 처리속도</strong> 산점도(오른쪽 위일수록 빠르고 정확)와, 파서별 기능·실측 성공률을 담은 비교표가 있습니다. "실측" 배지를 누르면 파서별 개조식 상세의견도 볼 수 있습니다.</p>
+          </div>
+
+          <div class="help-card">
+            <h3>🖼️ 멀티미디어 추출</h3>
+            <p>그림·표·차트·수식을 잘라내어 <strong>미디어 탭</strong>에 썸네일로 모으고, 클릭하면 팝업으로 크게 봅니다. 마크다운에도 이미지가 함께 표시됩니다.</p>
+          </div>
+
+          <div class="help-card">
+            <h3>⚙️ 파서 옵션 & LLM</h3>
+            <ul class="list-disc list-inside mt-2 space-y-1">
+              <li>각 파서의 <strong>⚙ 옵션</strong> 버튼으로 상세 설정(언어, GPU/CPU, DPI 등)을 조절합니다.</li>
+              <li>GPU 지원 파서는 <strong>auto/CPU/CUDA(윈도우)/MPS(맥)</strong>를 선택할 수 있습니다.</li>
+              <li>LLM 파서(GPT/Claude/Gemini)는 인증 상태와 <strong>모델 선택</strong>이 파서 선택 옆에 표시됩니다.</li>
+            </ul>
+          </div>
+
+          <div class="help-card">
+            <h3>🌐 기타</h3>
+            <ul class="list-disc list-inside mt-2 space-y-1">
+              <li><strong>다국어 UI</strong>: 한국어 / English / 日本語 (우상단 전환)</li>
+              <li><strong>다크/라이트 모드</strong>: 우상단 ☀️/🌙 토글</li>
+              <li><strong>페이지 범위</strong>: 현재페이지·전체·구간 선택으로 큰 문서도 빠르게 테스트</li>
+            </ul>
+          </div>
+        </div>
+
+        <!-- ── 파서 가이드 ── -->
+        <div x-show="helpTab==='guide'" class="space-y-4">
+          <!-- 파서 카테고리 다이어그램 -->
+          <div class="help-card">
+            <h3>🗺️ 파서 분류</h3>
+            <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-3">
+              <div class="rounded-lg p-3 bg-blue-50 dark:bg-blue-900/30 border border-blue-200 dark:border-blue-800">
+                <div class="text-xl mb-1">📝</div>
+                <div class="text-xs font-semibold text-blue-700 dark:text-blue-300">텍스트</div>
+                <div class="text-xs text-slate-500 dark:text-slate-400 mt-1">PyMuPDF, pdfplumber, pdfminer, pypdf, MarkItDown</div>
+              </div>
+              <div class="rounded-lg p-3 bg-purple-50 dark:bg-purple-900/30 border border-purple-200 dark:border-purple-800">
+                <div class="text-xl mb-1">🏗️</div>
+                <div class="text-xs font-semibold text-purple-700 dark:text-purple-300">레이아웃/ML</div>
+                <div class="text-xs text-slate-500 dark:text-slate-400 mt-1">Docling, Marker, MinerU, Unstructured</div>
+              </div>
+              <div class="rounded-lg p-3 bg-green-50 dark:bg-green-900/30 border border-green-200 dark:border-green-800">
+                <div class="text-xl mb-1">📊</div>
+                <div class="text-xs font-semibold text-green-700 dark:text-green-300">표</div>
+                <div class="text-xs text-slate-500 dark:text-slate-400 mt-1">Camelot, tabula-py</div>
+              </div>
+              <div class="rounded-lg p-3 bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-red-800">
+                <div class="text-xl mb-1">👁️</div>
+                <div class="text-xs font-semibold text-red-700 dark:text-red-300">OCR/VLM</div>
+                <div class="text-xs text-slate-500 dark:text-slate-400 mt-1">PaddleOCR, EasyOCR, OCRmyPDF, GPT/Claude/Gemini</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="help-card">
+            <h3>🔑 상황별 추천 파서</h3>
+            <table class="w-full text-xs mt-2 border-collapse">
+              <thead>
+                <tr class="bg-slate-50 dark:bg-slate-900">
+                  <th class="border border-slate-200 dark:border-slate-700 px-2 py-1.5 text-left dark:text-slate-200">상황</th>
+                  <th class="border border-slate-200 dark:border-slate-700 px-2 py-1.5 text-left dark:text-slate-200">추천 파서</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr><td class="border border-slate-200 dark:border-slate-700 px-2 py-1.5 dark:text-slate-300">빠른 텍스트 추출</td><td class="border border-slate-200 dark:border-slate-700 px-2 py-1.5 dark:text-slate-300">PyMuPDF, pypdf</td></tr>
+                <tr><td class="border border-slate-200 dark:border-slate-700 px-2 py-1.5 dark:text-slate-300">LLM/RAG 입력 준비</td><td class="border border-slate-200 dark:border-slate-700 px-2 py-1.5 dark:text-slate-300">PyMuPDF4LLM, Docling, Marker</td></tr>
+                <tr><td class="border border-slate-200 dark:border-slate-700 px-2 py-1.5 dark:text-slate-300">표 추출</td><td class="border border-slate-200 dark:border-slate-700 px-2 py-1.5 dark:text-slate-300">pdfplumber, Camelot, tabula-py</td></tr>
+                <tr><td class="border border-slate-200 dark:border-slate-700 px-2 py-1.5 dark:text-slate-300">수식 많은 논문</td><td class="border border-slate-200 dark:border-slate-700 px-2 py-1.5 dark:text-slate-300">Marker, MinerU</td></tr>
+                <tr><td class="border border-slate-200 dark:border-slate-700 px-2 py-1.5 dark:text-slate-300">스캔 PDF (한국어)</td><td class="border border-slate-200 dark:border-slate-700 px-2 py-1.5 dark:text-slate-300">PaddleOCR, EasyOCR, OCRmyPDF+Tesseract</td></tr>
+                <tr><td class="border border-slate-200 dark:border-slate-700 px-2 py-1.5 dark:text-slate-300">복잡한 레이아웃</td><td class="border border-slate-200 dark:border-slate-700 px-2 py-1.5 dark:text-slate-300">Docling, MinerU</td></tr>
+                <tr><td class="border border-slate-200 dark:border-slate-700 px-2 py-1.5 dark:text-slate-300">bbox 좌표 필요</td><td class="border border-slate-200 dark:border-slate-700 px-2 py-1.5 dark:text-slate-300">PyMuPDF, pdfplumber</td></tr>
+                <tr><td class="border border-slate-200 dark:border-slate-700 px-2 py-1.5 dark:text-slate-300">최고 품질 (API)</td><td class="border border-slate-200 dark:border-slate-700 px-2 py-1.5 dark:text-slate-300">GPT/Claude/Gemini Vision</td></tr>
+              </tbody>
+            </table>
+            <p class="text-xs text-slate-500 dark:text-slate-400 mt-2">💡 정확한 비교는 <strong>파서 정보</strong> 메뉴의 리스트뷰에서 기능별로 확인하세요.</p>
+          </div>
+        </div>
+
+        <!-- ── 설치·배포 ── -->
+        <div x-show="helpTab==='install'" class="space-y-4">
+          <div class="help-card">
+            <h3>📦 파서 설치</h3>
+            <p>미설치 파서는 ⚠ 표시됩니다. 가상환경에서 설치하세요:</p>
+            <div class="bg-slate-800 text-green-400 rounded-lg p-3 font-mono text-xs mt-2 space-y-1 overflow-x-auto">
+              <div class="text-slate-500"># 경량 파서</div>
+              <div>pip install pdfplumber pdfminer.six pypdf pymupdf4llm markitdown</div>
+              <div class="text-slate-500 mt-2"># 고급 파서 (Python 3.10+)</div>
+              <div>pip install docling marker-pdf mineru</div>
+              <div class="text-slate-500 mt-2"># OCR 파서</div>
+              <div>pip install easyocr paddlepaddle paddleocr ocrmypdf</div>
+              <div class="text-slate-500 mt-2"># VLM (API)</div>
+              <div>pip install openai anthropic google-generativeai</div>
+            </div>
+          </div>
+
+          <div class="help-card">
+            <h3>🛠️ 시스템 의존성 (OCR용)</h3>
+            <p>OCRmyPDF·Unstructured 등은 외부 도구가 필요합니다:</p>
+            <div class="bg-slate-800 text-green-400 rounded-lg p-3 font-mono text-xs mt-2 space-y-1 overflow-x-auto">
+              <div class="text-slate-500"># macOS (Homebrew)</div>
+              <div>brew install poppler tesseract tesseract-lang ghostscript</div>
+              <div class="text-slate-500 mt-2"># Windows: 각 도구 설치 후 PATH 등록</div>
+            </div>
+          </div>
+
+          <div class="help-card">
+            <h3>💻 실행 파일 만들기 (Mac/Windows)</h3>
+            <p>PyInstaller로 Python 없이 실행되는 단독 실행 파일을 만들 수 있습니다:</p>
+            <div class="bg-slate-800 text-green-400 rounded-lg p-3 font-mono text-xs mt-2 space-y-1 overflow-x-auto">
+              <div>pip install pyinstaller</div>
+              <div>pyinstaller --onefile --windowed run.py</div>
+              <div class="text-slate-500"># dist/ 폴더에 실행 파일 생성</div>
+            </div>
+          </div>
+
+          <div class="help-card">
+            <h3>ℹ️ 정보</h3>
+            <p>ParserTry · <strong>KISTI BLUESKY</strong> 프로젝트<br>
+            개발: 이용 (ryonglee@kisti.re.kr)</p>
+            <p class="mt-1">
+              <a href="https://github.com/leeryong/ParserTry" target="_blank" class="text-blue-600 dark:text-blue-400 hover:underline">github.com/leeryong/ParserTry ⬡</a><br>
+              <a href="https://github.com/leeryong/KISTI_BLUESKY" target="_blank" class="text-blue-600 dark:text-blue-400 hover:underline">github.com/leeryong/KISTI_BLUESKY ⬡</a>
+            </p>
+          </div>
+        </div>
+      </div><!-- end help -->
+
+    </main>
+  </div><!-- end main-layout -->
+
+  <!-- ── 하단 상태바 (진행 상황) ──────────────────────────── -->
+  <footer class="statusbar">
+    <div class="flex items-center gap-2 min-w-0 flex-1">
+      <template x-if="isParsingActive">
+        <span class="flex items-center gap-2 min-w-0">
+          <span class="spinner" style="width:11px;height:11px;border-width:2px"></span>
+          <span class="text-blue-600 dark:text-blue-400 font-medium whitespace-nowrap" x-text="getParserName(activeResultParser)"></span>
+          <span class="truncate" x-text="parseStep || (Math.round(parseProgress*100)+'%')"></span>
+          <span class="statusbar-progress hidden sm:block">
+            <span class="statusbar-progress-fill" :style="`width:${parseProgress*100}%`"></span>
+          </span>
+        </span>
+      </template>
+      <template x-if="!isParsingActive">
+        <span class="truncate" x-text="statusMessage"></span>
+      </template>
+    </div>
+    <div class="flex items-center gap-3 flex-shrink-0">
+      <span x-show="selectedDoc && totalPages" x-text="`${currentPage+1}/${totalPages}p`"></span>
+      <!-- KISTI BLUESKY 홍보 링크 (클릭 → GitHub) -->
+      <a href="https://github.com/leeryong/KISTI_BLUESKY" target="_blank"
+         class="statusbar-credit flex items-center gap-1.5 hover:text-blue-500 dark:hover:text-blue-400 transition-colors"
+         title="KISTI BLUESKY 프로젝트 · GitHub에서 보기">
+        <span>✨</span>
+        <span class="font-semibold tracking-wide">KISTI BLUESKY</span>
+        <svg class="w-3 h-3" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+      </a>
+    </div>
+  </footer>
+
+  <!-- 토스트 알림 -->
+  <div x-show="toast.show" x-transition class="toast" :class="toast.type"
+       x-text="toast.message"></div>
+
+  <!-- ══ 오류 상세 팝업 ════════════════════════════════════════ -->
+  <div x-show="errorPopup"
+       class="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-60 p-6"
+       x-transition.opacity
+       @click.self="errorPopup = null"
+       @keydown.escape.window="errorPopup = null">
+    <template x-if="errorPopup">
+      <div class="bg-white dark:bg-slate-800 rounded-2xl shadow-2xl w-full max-w-2xl max-h-[85vh] flex flex-col overflow-hidden">
+        <div class="px-5 py-4 border-b border-slate-200 dark:border-slate-700 flex items-center gap-2">
+          <span class="text-xl">⚠️</span>
+          <div>
+            <h3 class="font-semibold text-slate-800 dark:text-slate-100">파싱 오류 상세</h3>
+            <p class="text-xs text-slate-500 dark:text-slate-400">
+              <span class="font-medium" :style="`color:${getParserColor(errorPopup.parser_id)}`" x-text="errorPopup.parser_name"></span>
+            </p>
+          </div>
+          <button @click="errorPopup = null"
+                  class="ml-auto text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 text-xl w-8 h-8 flex items-center justify-center rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700">✕</button>
+        </div>
+        <div class="overflow-auto px-5 py-4 space-y-3">
+          <!-- 원인 요약 -->
+          <div class="bg-amber-50 dark:bg-amber-950/60 border border-amber-200 dark:border-amber-800 rounded-lg p-3">
+            <p class="text-xs font-semibold text-amber-700 dark:text-amber-300 mb-1">💡 추정 원인 / 해결 방법</p>
+            <p class="text-sm text-amber-800 dark:text-amber-200" x-text="errorHint(errorPopup.error)"></p>
+          </div>
+          <!-- 원본 오류 메시지 -->
+          <div>
+            <p class="text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1">원본 오류 메시지</p>
+            <pre class="text-xs text-red-600 dark:text-red-300 bg-slate-50 dark:bg-slate-900 rounded-lg p-3 whitespace-pre-wrap break-all" x-text="errorPopup.error || '(메시지 없음)'"></pre>
+          </div>
+          <!-- 설치 명령(있으면) -->
+          <div x-show="errorPopup.install_command">
+            <p class="text-xs font-semibold text-slate-600 dark:text-slate-300 mb-1">설치 명령</p>
+            <div class="bg-slate-800 text-green-400 rounded-lg p-2 font-mono text-xs" x-text="errorPopup.install_command"></div>
+          </div>
+        </div>
+        <div class="px-5 py-3 border-t border-slate-200 dark:border-slate-700 flex justify-end gap-2">
+          <a x-show="errorPopup.github_url" :href="errorPopup.github_url" target="_blank"
+             class="text-xs bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200 px-4 py-1.5 rounded-lg transition-colors">🔗 GitHub</a>
+          <button @click="copyError()" class="text-xs bg-slate-100 dark:bg-slate-700 hover:bg-slate-200 dark:hover:bg-slate-600 text-slate-700 dark:text-slate-200 px-4 py-1.5 rounded-lg transition-colors">📋 복사</button>
+          <button @click="errorPopup = null" class="text-xs bg-blue-600 hover:bg-blue-700 text-white px-4 py-1.5 rounded-lg transition-colors">닫기</button>
+        </div>
+      </div>
+    </template>
+  </div>
+
+  <!-- ══ 미디어 뷰어 팝업 ════════════════════════════════════════ -->
+  <div x-show="mediaPopup"
+       class="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-70 p-6"
+       x-transition.opacity
+       @click.self="mediaPopup = null"
+       @keydown.escape.window="mediaPopup = null">
+    <template x-if="mediaPopup">
+      <div class="bg-white dark:bg-slate-800 rounded-2xl shadow-2xl max-w-4xl max-h-[90vh] flex flex-col overflow-hidden">
+        <div class="px-4 py-3 border-b border-slate-200 dark:border-slate-700 flex items-center gap-2">
+          <span class="elem-badge" :class="`elem-${mediaPopup.type}`" x-text="getElemTypeLabel(mediaPopup.type)"></span>
+          <span class="text-sm text-slate-600 dark:text-slate-300" x-text="`페이지 ${mediaPopup.page+1}`"></span>
+          <span class="text-xs text-slate-400 dark:text-slate-500" x-text="`${mediaPopup.width}×${mediaPopup.height}px`"></span>
+          <div class="ml-auto flex items-center gap-2">
+            <a :href="mediaPopup.url" :download="`${mediaPopup.type}_p${mediaPopup.page+1}.png`"
+               class="text-xs text-blue-600 dark:text-blue-400 hover:underline">⬇ 다운로드</a>
+            <button @click="mediaPopup = null"
+                    class="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 text-xl leading-none w-8 h-8 flex items-center justify-center rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700">✕</button>
+          </div>
+        </div>
+        <div class="overflow-auto p-4 bg-slate-100 dark:bg-slate-950 flex items-center justify-center">
+          <img :src="mediaPopup.url" :alt="mediaPopup.type" class="max-w-full max-h-[70vh] object-contain rounded shadow-lg bg-white">
+        </div>
+        <div x-show="mediaPopup.caption" class="px-4 py-2 border-t border-slate-200 dark:border-slate-700 text-xs text-slate-500 dark:text-slate-400 max-h-24 overflow-auto">
+          <span x-text="mediaPopup.caption"></span>
+        </div>
+      </div>
+    </template>
+  </div>
+
+  <!-- ══ 파서 옵션 팝업 ══════════════════════════════════════════ -->
+  <div x-show="showOptions"
+       class="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50"
+       x-transition:enter="transition ease-out duration-150"
+       x-transition:enter-start="opacity-0"
+       x-transition:enter-end="opacity-100"
+       @click.self="showOptions = false">
+
+    <div class="bg-white dark:bg-slate-800 rounded-2xl shadow-2xl w-full max-w-lg mx-4 overflow-hidden"
+         style="max-height:85vh; display:flex; flex-direction:column">
+
+      <!-- 헤더 -->
+      <div class="px-5 py-4 border-b border-slate-200 dark:border-slate-700 flex items-center justify-between flex-shrink-0">
+        <div>
+          <h3 class="font-semibold text-slate-800 dark:text-slate-100 text-base">
+            ⚙ 파서 옵션
+          </h3>
+          <p class="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+            <span class="font-medium" :style="`color:${getParserColor(activeResultParser)}`"
+                  x-text="getParserName(activeResultParser)"></span>
+            의 세부 설정
+          </p>
+        </div>
+        <button @click="showOptions = false"
+                class="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 text-xl leading-none w-8 h-8 flex items-center justify-center rounded-lg hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors">✕</button>
+      </div>
+
+      <!-- 옵션 필드 (스크롤 가능) -->
+      <div class="overflow-y-auto px-5 py-4 space-y-5">
+        <template x-if="Object.keys(activeParserSchema).length === 0">
+          <div class="text-center py-6 text-slate-400 dark:text-slate-500">
+            <div class="text-3xl mb-2">🔧</div>
+            <p class="text-sm">이 파서는 별도 옵션이 없습니다.</p>
+          </div>
+        </template>
+
+        <template x-for="(schema, key) in activeParserSchema" :key="key">
+          <div>
+            <!-- 필드 레이블 + 설명 -->
+            <label class="block text-sm font-medium text-slate-700 dark:text-slate-200 mb-1"
+                   x-text="schema.label || key"></label>
+            <p x-show="schema.description"
+               class="text-xs text-slate-500 dark:text-slate-400 mb-2 leading-relaxed"
+               x-text="schema.description"></p>
+
+            <!-- boolean 토글 -->
+            <template x-if="schema.type === 'boolean'">
+              <label class="flex items-center gap-3 cursor-pointer">
+                <div class="relative">
+                  <input type="checkbox" class="sr-only peer"
+                         :checked="getOptionValue(key, schema.default)"
+                         @change="setOptionValue(key, $event.target.checked)">
+                  <div class="w-10 h-5 bg-slate-200 dark:bg-slate-600 rounded-full peer
+                              peer-checked:bg-blue-600 after:content-[''] after:absolute
+                              after:top-0.5 after:left-0.5 after:bg-white after:rounded-full
+                              after:h-4 after:w-4 after:transition-all peer-checked:after:translate-x-5"></div>
+                </div>
+                <span class="text-sm text-slate-600 dark:text-slate-300">
+                  <span x-text="getOptionValue(key, schema.default) ? '활성화' : '비활성화'"></span>
+                  <span x-show="schema.default !== undefined"
+                        class="text-slate-400 dark:text-slate-500 ml-1"
+                        x-text="'(기본값: ' + schema.default + ')'"></span>
+                </span>
+              </label>
+            </template>
+
+            <!-- select 드롭다운 -->
+            <template x-if="schema.type === 'select'">
+              <div>
+                <select :value="getOptionValue(key, schema.default)"
+                        @change="setOptionValue(key, $event.target.value)"
+                        class="w-full border border-slate-300 dark:border-slate-600 rounded-lg px-3 py-2 text-sm bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-100 focus:ring-2 focus:ring-blue-500">
+                  <template x-for="(opt, idx) in schema.options" :key="opt">
+                    <option :value="opt"
+                            :selected="getOptionValue(key, schema.default) == opt"
+                            x-text="optLabel(schema, opt, idx)">
+                    </option>
+                  </template>
+                </select>
+                <p class="text-xs text-slate-400 dark:text-slate-500 mt-1"
+                   x-text="'기본값: ' + schema.default"></p>
+              </div>
+            </template>
+
+            <!-- password 입력 -->
+            <template x-if="schema.type === 'password'">
+              <div class="relative">
+                <input :type="showApiKey[key] ? 'text' : 'password'"
+                       :value="getOptionValue(key, schema.default)"
+                       @input="setOptionValue(key, $event.target.value)"
+                       placeholder="여기에 API 키를 입력하세요"
+                       class="w-full border border-slate-300 dark:border-slate-600 rounded-lg px-3 py-2 pr-10 text-sm bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-100 focus:ring-2 focus:ring-blue-500 font-mono">
+                <button @click="showApiKey[key] = !showApiKey[key]"
+                        class="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 text-sm px-1">
+                  <span x-text="showApiKey[key] ? '🙈' : '👁'"></span>
+                </button>
+              </div>
+            </template>
+
+            <!-- textarea -->
+            <template x-if="schema.type === 'textarea'">
+              <textarea :value="getOptionValue(key, schema.default)"
+                        @input="setOptionValue(key, $event.target.value)"
+                        rows="4"
+                        class="w-full border border-slate-300 dark:border-slate-600 rounded-lg px-3 py-2 text-sm bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-100 focus:ring-2 focus:ring-blue-500 leading-relaxed resize-y"
+                        x-text="getOptionValue(key, schema.default)"></textarea>
+            </template>
+
+            <!-- integer / number 슬라이더+입력 -->
+            <template x-if="schema.type === 'integer' || schema.type === 'number'">
+              <div class="flex items-center gap-3">
+                <input x-show="schema.min !== undefined && schema.max !== undefined"
+                       type="range"
+                       :min="schema.min" :max="schema.max"
+                       :step="schema.type === 'integer' ? 1 : 0.1"
+                       :value="getOptionValue(key, schema.default)"
+                       @input="setOptionValue(key, +$event.target.value)"
+                       class="flex-1 accent-blue-600">
+                <input type="number"
+                       :min="schema.min" :max="schema.max"
+                       :value="getOptionValue(key, schema.default)"
+                       @input="setOptionValue(key, +$event.target.value)"
+                       class="w-24 border border-slate-300 dark:border-slate-600 rounded-lg px-2 py-1.5 text-sm text-center bg-white dark:bg-slate-900 dark:text-slate-100">
+                <span class="text-xs text-slate-400 dark:text-slate-500"
+                      x-text="'기본: ' + schema.default"></span>
+              </div>
+            </template>
+
+            <!-- string 일반 입력 -->
+            <template x-if="schema.type === 'string'">
+              <input type="text"
+                     :value="getOptionValue(key, schema.default)"
+                     @input="setOptionValue(key, $event.target.value)"
+                     :placeholder="'기본값: ' + schema.default"
+                     class="w-full border border-slate-300 dark:border-slate-600 rounded-lg px-3 py-2 text-sm bg-white dark:bg-slate-900 text-slate-800 dark:text-slate-100 focus:ring-2 focus:ring-blue-500">
+            </template>
+          </div>
+        </template>
+      </div>
+
+      <!-- 하단 버튼 -->
+      <div class="px-5 py-3 border-t border-slate-200 dark:border-slate-700 flex items-center justify-between flex-shrink-0">
+        <button @click="resetOptions()"
+                class="text-sm text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 transition-colors">
+          ↺ 기본값으로 초기화
+        </button>
+        <div class="flex gap-2">
+          <button @click="showOptions = false"
+                  class="px-4 py-1.5 text-sm rounded-lg border border-slate-300 dark:border-slate-600 text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors">
+            닫기
+          </button>
+          <button @click="showOptions = false"
+                  class="px-4 py-1.5 text-sm rounded-lg bg-blue-600 hover:bg-blue-700 text-white transition-colors font-medium">
+            적용
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── 개념도 팝업 ── -->
+  <div x-show="conceptPopup"
+       class="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4"
+       x-transition
+       @click.self="conceptPopup = false"
+       @keydown.escape.window="conceptPopup = false">
+    <div class="relative max-w-5xl w-full">
+      <button @click="conceptPopup = false"
+              class="absolute -top-9 right-0 text-white/70 hover:text-white text-sm flex items-center gap-1.5 transition-colors">
+        ✕ 닫기
+      </button>
+      <img :src="lang === 'en' ? '/assets/concept_en.png' : '/assets/concept_ko.png'"
+           alt="ParserTry 개념도"
+           class="w-full rounded-xl shadow-2xl">
+    </div>
+  </div>
+
+  <!-- ── 파서 실측 경험 상세 팝업 (개조식) ── -->
+  <div x-show="experiencePopup"
+       class="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4"
+       x-transition
+       @click.self="experiencePopup = null"
+       @keydown.escape.window="experiencePopup = null">
+    <div class="relative max-w-2xl w-full max-h-[85vh] overflow-auto bg-white dark:bg-slate-800 rounded-xl shadow-2xl"
+         x-show="experiencePopup">
+      <template x-if="experiencePopup">
+        <div class="p-5">
+          <!-- 헤더 -->
+          <div class="flex items-start justify-between mb-3 sticky top-0">
+            <div>
+              <div class="flex items-center gap-2">
+                <span class="w-3 h-3 rounded-full flex-shrink-0" :style="`background:${experiencePopup.color}`"></span>
+                <h3 class="text-lg font-bold text-slate-800 dark:text-slate-100" x-text="experiencePopup.parser_name"></h3>
+                <span class="text-xs px-1.5 py-0.5 rounded-full" :class="expRateCls(expRate(experiencePopup))"
+                      x-text="expRate(experiencePopup)!==null ? '성공률 '+expRate(experiencePopup)+'%' : '—'"></span>
+              </div>
+              <p class="text-xs text-slate-500 dark:text-slate-400 mt-0.5">샘플문서 4종 1페이지 실측 경험</p>
+            </div>
+            <button @click="experiencePopup = null"
+                    class="text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 text-sm">✕</button>
+          </div>
+
+          <!-- 한줄평 -->
+          <div x-show="experiencePopup.experience && experiencePopup.experience.verdict"
+               class="mb-4 px-3 py-2 rounded-lg bg-blue-50 dark:bg-blue-900/30 text-sm text-blue-800 dark:text-blue-200">
+            <span x-text="experiencePopup.experience ? experiencePopup.experience.verdict : ''"></span>
+          </div>
+
+          <!-- 개조식 의견 -->
+          <div class="mb-4" x-show="experiencePopup.experience && experiencePopup.experience.notes && experiencePopup.experience.notes.length">
+            <h4 class="text-sm font-semibold text-slate-700 dark:text-slate-200 mb-1.5">📋 상세 의견</h4>
+            <ul class="space-y-1">
+              <template x-for="(n, i) in (experiencePopup.experience ? experiencePopup.experience.notes : [])" :key="i">
+                <li class="flex gap-2 text-sm text-slate-600 dark:text-slate-300 leading-relaxed">
+                  <span class="text-blue-500 flex-shrink-0">▪</span><span x-text="n"></span>
+                </li>
+              </template>
+            </ul>
+          </div>
+
+          <!-- 문서별 실측 표 -->
+          <div x-show="experiencePopup.experience && experiencePopup.experience.per_doc && experiencePopup.experience.per_doc.length">
+            <h4 class="text-sm font-semibold text-slate-700 dark:text-slate-200 mb-1.5">📄 문서별 결과</h4>
+            <table class="w-full text-xs border border-slate-200 dark:border-slate-700 rounded">
+              <thead class="bg-slate-50 dark:bg-slate-900 text-slate-500 dark:text-slate-400">
+                <tr>
+                  <th class="px-2 py-1.5 text-left">문서</th>
+                  <th class="px-2 py-1.5 text-center">상태</th>
+                  <th class="px-2 py-1.5 text-center">시간</th>
+                  <th class="px-2 py-1.5 text-center">요소</th>
+                  <th class="px-2 py-1.5 text-center">BBox</th>
+                  <th class="px-2 py-1.5 text-center">글자수</th>
+                </tr>
+              </thead>
+              <tbody>
+                <template x-for="(d, i) in (experiencePopup.experience ? experiencePopup.experience.per_doc : [])" :key="i">
+                  <tr class="border-t border-slate-100 dark:border-slate-700">
+                    <td class="px-2 py-1.5 text-slate-600 dark:text-slate-300 max-w-[12rem] truncate" :title="d.doc" x-text="d.doc"></td>
+                    <td class="px-2 py-1.5 text-center font-medium" :class="expDocStatusCls(d.status)"
+                        x-text="d.status==='success' ? '성공' : (d.status||'실패')"></td>
+                    <td class="px-2 py-1.5 text-center text-slate-500" x-text="d.time!=null ? d.time+'s' : '—'"></td>
+                    <td class="px-2 py-1.5 text-center text-slate-500" x-text="d.elems!=null ? d.elems : '—'"></td>
+                    <td class="px-2 py-1.5 text-center text-slate-500" x-text="d.bbox!=null ? d.bbox : '—'"></td>
+                    <td class="px-2 py-1.5 text-center text-slate-500" x-text="d.chars!=null ? d.chars : '—'"></td>
+                  </tr>
+                </template>
+              </tbody>
+            </table>
+            <!-- 에러 상세 -->
+            <template x-for="(d, i) in (experiencePopup.experience ? experiencePopup.experience.per_doc : [])" :key="'e'+i">
+              <p x-show="d.error" class="mt-1.5 text-xs text-rose-500">
+                <span class="font-medium" x-text="(d.doc||'').slice(0,20)+': '"></span><span x-text="d.error"></span>
+              </p>
+            </template>
+          </div>
+        </div>
+      </template>
+    </div>
+  </div>
+
+</div><!-- end app -->
+
+<script src="/app.js?v=24"></script>
+</body>
+</html>
