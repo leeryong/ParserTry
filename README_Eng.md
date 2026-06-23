@@ -16,6 +16,19 @@
 
 ---
 
+## 🆕 Latest News
+
+> ### 📦 ${\color{red}\textsf{ParserTry distribution is out!}}$
+>
+> <b>June 23, 2026</b> — The ready-to-use **ParserTry distribution** is now public.
+> On **Windows, macOS, or Linux**, with no preparation: unzip and **double-click** once —
+> the first launch installs and starts everything automatically. Compare **21 PDF parsers**
+> on the same document, side by side.
+>
+> ➡️ **[See the easiest install guide](#-easiest-install-for-everyone--no-terminal-needed)**
+
+---
+
 ### Concept
 
 > **"The right parser depends on your document and your setup."**
